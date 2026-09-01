@@ -5,29 +5,507 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Ops Performance Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
-  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-  <link rel="stylesheet" href="styles.css" />
   <script>
     tailwind.config = {
       theme: {
         extend: {
           colors: {
-            brand: { 50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',300:'#a5b4fc',400:'#818cf8',500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81' }
+            brand: {50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',300:'#a5b4fc',400:'#818cf8',500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81'}
           }
         }
       }
     }
   </script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+    .drop-zone{border:2px dashed #d1d5db;border-radius:0.75rem;padding:2rem;text-align:center;cursor:pointer;transition:all 0.2s}
+    .drop-zone:hover,.drop-zone.active{border-color:#818cf8;background:#eef2ff}
+    input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+    input[type=number]{-moz-appearance:textfield}
+  </style>
 </head>
 <body class="bg-gray-50 text-gray-900 min-h-screen">
   <div id="root"></div>
-  <script type="text/babel" src="utils.js"></script>
-  <script type="text/babel" src="App.jsx"></script>
-  <script type="text/babel">
+  <script type="text/babel" data-type="module">
+    const { useState, useEffect, useMemo, useCallback, useRef } = React;
+
+    // ─── Column Detection ──────────────────────────────
+    const COLUMN_KEYWORDS = {
+      city: ['city','market','location','region'],
+      date: ['date','month','period','time','year-month','yearmonth'],
+      orders: ['orders','order count','num orders','number of orders','order volume','total orders','volume'],
+      utr: ['utr','utilization','utilization rate'],
+      dt: ['dt','delivery time','delivery minutes','delivery time (min)','avg delivery','average delivery'],
+      cancelled: ['cancelled','canceled','cancellations','logistics cancel','logistics cancels','cancelled orders','cancel'],
+      riders: ['riders','active riders','rider count','active rider count','riders count','headcount'],
+    };
+
+    function detectColumn(header) {
+      const h = header.toLowerCase().trim();
+      for (const [field, keywords] of Object.entries(COLUMN_KEYWORDS)) {
+        for (const kw of keywords) {
+          if (h === kw || h.includes(kw)) return field;
+        }
+      }
+      return null;
+    }
+
+    // ─── Parse Files ───────────────────────────────────
+    function parseFiles(fileList) {
+      return new Promise((resolve) => {
+        const allRows = [];
+        let done = 0;
+        if (!fileList.length) { resolve([]); return; }
+        Array.from(fileList).forEach((file) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            try {
+              const data = new Uint8Array(e.target.result);
+              const wb = XLSX.read(data, { type: 'array', cellDates: true });
+              wb.SheetNames.forEach((sn) => {
+                const sheet = wb.Sheets[sn];
+                const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+                if (!json.length) return;
+                const headers = Object.keys(json[0]);
+                const mapping = {};
+                headers.forEach((h) => { const d = detectColumn(h); if (d) mapping[h] = d; });
+                json.forEach((row) => {
+                  const parsed = {};
+                  Object.entries(row).forEach(([k, v]) => { const f = mapping[k]; if (f) parsed[f] = v; });
+                  if (Object.keys(parsed).length) allRows.push(parsed);
+                });
+              });
+            } catch (err) { console.error('Parse error:', file.name, err); }
+            done++;
+            if (done === fileList.length) resolve(allRows);
+          };
+          reader.onerror = () => { done++; if (done === fileList.length) resolve(allRows); };
+          reader.readAsArrayBuffer(file);
+        });
+      });
+    }
+
+    // ─── Normalize & Aggregate ─────────────────────────
+    function normalizeMonth(val) {
+      if (!val) return '';
+      if (val instanceof Date) return val.getFullYear() + '-' + String(val.getMonth()+1).padStart(2,'0');
+      const s = String(val).trim();
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+      const m = s.match(/(\d{4})[-/](\d{1,2})/);
+      if (m) return m[1] + '-' + m[2].padStart(2,'0');
+      return s;
+    }
+
+    function aggregateData(rows) {
+      const norm = rows.map((r) => ({
+        city: String(r.city||'').trim(),
+        month: normalizeMonth(r.date || r.month),
+        orders: parseFloat(r.orders)||0,
+        utr: parseFloat(r.utr)||0,
+        dt: parseFloat(r.dt)||0,
+        cancelled: parseFloat(r.cancelled)||0,
+        riders: parseFloat(r.riders)||0,
+      }));
+      const byKey = {};
+      norm.forEach((r) => {
+        const key = r.city + '|||' + r.month;
+        if (!byKey[key]) byKey[key] = {city:r.city,month:r.month,orders:0,utrSum:0,utrCnt:0,dtSum:0,dtCnt:0,cancelled:0,riders:0,riderCnt:0};
+        const g = byKey[key];
+        g.orders += r.orders;
+        g.cancelled += r.cancelled;
+        if (r.utr) { g.utrSum += r.utr; g.utrCnt++; }
+        if (r.dt) { g.dtSum += r.dt; g.dtCnt++; }
+        if (r.riders) { g.riders += r.riders; g.riderCnt++; }
+      });
+      return Object.values(byKey).map((g) => ({
+        city:g.city, month:g.month, orders:g.orders,
+        utr: g.utrCnt ? g.utrSum/g.utrCnt : 0,
+        dt: g.dtCnt ? g.dtSum/g.dtCnt : 0,
+        cancelled: g.cancelled,
+        riders: g.riderCnt ? g.riders/g.riderCnt : 0,
+      }));
+    }
+
+    function filterData(data, city, month) {
+      return data.filter((r) => {
+        if (city && city !== '__all__' && r.city !== city) return false;
+        if (month && month !== '__all__' && r.month !== month) return false;
+        return true;
+      });
+    }
+
+    function computeMetrics(filtered) {
+      if (!filtered.length) return {totalOrders:0,avgUtr:0,avgDt:0,totalCancelled:0,activeRiders:0};
+      const totalOrders = filtered.reduce((s,r) => s+r.orders, 0);
+      const totalCancelled = filtered.reduce((s,r) => s+r.cancelled, 0);
+      const uv = filtered.filter(r => r.utr > 0);
+      const dv = filtered.filter(r => r.dt > 0);
+      const rv = filtered.filter(r => r.riders > 0);
+      return {
+        totalOrders,
+        avgUtr: uv.length ? uv.reduce((s,r) => s+r.utr, 0)/uv.length : 0,
+        avgDt: dv.length ? dv.reduce((s,r) => s+r.dt, 0)/dv.length : 0,
+        totalCancelled,
+        activeRiders: rv.length ? rv.reduce((s,r) => s+r.riders, 0)/rv.length : 0,
+      };
+    }
+
+    function aggregateByMonth(filtered) {
+      const bm = {};
+      filtered.forEach((r) => {
+        if (!bm[r.month]) bm[r.month] = {month:r.month,orders:0,utrSum:0,utrCnt:0,dtSum:0,dtCnt:0};
+        const m = bm[r.month];
+        m.orders += r.orders;
+        if (r.utr) { m.utrSum += r.utr; m.utrCnt++; }
+        if (r.dt) { m.dtSum += r.dt; m.dtCnt++; }
+      });
+      return Object.values(bm).map((m) => ({
+        month:m.month, orders:m.orders,
+        utr: m.utrCnt ? m.utrSum/m.utrCnt : 0,
+        dt: m.dtCnt ? m.dtSum/m.dtCnt : 0,
+      })).sort((a,b) => a.month.localeCompare(b.month));
+    }
+
+    function aggregateByCityCancelled(filtered) {
+      const bc = {};
+      filtered.forEach((r) => {
+        if (!bc[r.city]) bc[r.city] = {city:r.city,cancelled:0};
+        bc[r.city].cancelled += r.cancelled;
+      });
+      return Object.values(bc).filter(c => c.cancelled > 0).sort((a,b) => b.cancelled - a.cancelled);
+    }
+
+    function getUniqueCities(data) { return [...new Set(data.map(r => r.city).filter(Boolean))].sort(); }
+    function getUniqueMonths(data) { return [...new Set(data.map(r => r.month).filter(Boolean))].sort(); }
+
+    // ─── SVG Bar Chart (no Recharts) ──────────────────
+    function SimpleBarChart({ data, xKey, yKey, color, horizontal, height }) {
+      if (!data.length) return null;
+      const maxVal = Math.max(...data.map(d => d[yKey]), 1);
+      const barH = 28;
+      const h = height || (horizontal ? data.length * (barH + 8) + 20 : 280);
+      const w = 500;
+      const pad = { top: 10, right: 20, bottom: 30, left: horizontal ? 90 : 50 };
+      const innerW = w - pad.left - pad.right;
+      const innerH = h - pad.top - pad.bottom;
+
+      if (horizontal) {
+        return (
+          <svg viewBox={`0 0 ${w} ${h}`} style={{width:'100%',height:'auto'}}>
+            {data.map((d, i) => {
+              const y = pad.top + i * (barH + 8);
+              const bw = (d[yKey] / maxVal) * innerW;
+              return (
+                <g key={i}>
+                  <text x={pad.left - 6} y={y + barH/2 + 4} textAnchor="end" fontSize="11" fill="#6b7280">{d[xKey]}</text>
+                  <rect x={pad.left} y={y} width={Math.max(bw, 2)} height={barH} rx="4" fill={color || '#6366f1'} opacity="0.85" />
+                  <text x={pad.left + bw + 6} y={y + barH/2 + 4} fontSize="11" fill="#374151" fontWeight="500">{d[yKey].toLocaleString()}</text>
+                </g>
+              );
+            })}
+          </svg>
+        );
+      }
+
+      const barW = Math.min((innerW / data.length) * 0.6, 40);
+      const gap = innerW / data.length;
+      return (
+        <svg viewBox={`0 0 ${w} ${h}`} style={{width:'100%',height:'auto'}}>
+          {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
+            const y = pad.top + innerH - pct * innerH;
+            return (
+              <g key={i}>
+                <line x1={pad.left} y1={y} x2={w - pad.right} y2={y} stroke="#e5e7eb" strokeDasharray="3,3" />
+                <text x={pad.left - 6} y={y + 4} textAnchor="end" fontSize="10" fill="#9ca3af">{Math.round(maxVal * pct).toLocaleString()}</text>
+              </g>
+            );
+          })}
+          {data.map((d, i) => {
+            const x = pad.left + i * gap + (gap - barW) / 2;
+            const bh = (d[yKey] / maxVal) * innerH;
+            const y = pad.top + innerH - bh;
+            const colors = ['#6366f1','#8b5cf6','#a855f7','#ec4899','#f43f5e','#f97316','#eab308','#22c55e','#14b8a6','#06b6d4'];
+            return (
+              <g key={i}>
+                <rect x={x} y={y} width={barW} height={bh} rx="4" fill={colors[i % colors.length]} opacity="0.85" />
+                <text x={x + barW/2} y={h - 8} textAnchor="middle" fontSize="10" fill="#6b7280">{d[xKey]}</text>
+              </g>
+            );
+          })}
+        </svg>
+      );
+    }
+
+    // ─── SVG Line Chart ────────────────────────────────
+    function SimpleLineChart({ data, lines, height }) {
+      if (!data.length) return null;
+      const h = height || 280;
+      const w = 500;
+      const pad = { top: 20, right: 60, bottom: 30, left: 50 };
+      const innerW = w - pad.left - pad.right;
+      const innerH = h - pad.top - pad.bottom;
+
+      return (
+        <svg viewBox={`0 0 ${w} ${h}`} style={{width:'100%',height:'auto'}}>
+          {/* Grid */}
+          {[0,0.25,0.5,0.75,1].map((pct,i) => {
+            const y = pad.top + innerH - pct * innerH;
+            return <line key={i} x1={pad.left} y1={y} x2={w-pad.right} y2={y} stroke="#e5e7eb" strokeDasharray="3,3" />;
+          })}
+          {/* X labels */}
+          {data.map((d,i) => {
+            const x = pad.left + (i / Math.max(data.length-1, 1)) * innerW;
+            return <text key={i} x={x} y={h-8} textAnchor="middle" fontSize="10" fill="#6b7280">{d.month}</text>;
+          })}
+          {/* Lines */}
+          {lines.map((line, li) => {
+            const vals = data.map(d => d[line.key]);
+            const maxV = Math.max(...vals, 1);
+            const minV = Math.min(...vals, 0);
+            const range = maxV - minV || 1;
+            const points = data.map((d,i) => {
+              const x = pad.left + (i / Math.max(data.length-1, 1)) * innerW;
+              const y = pad.top + innerH - ((d[line.key] - minV) / range) * innerH;
+              return `${x},${y}`;
+            }).join(' ');
+            return (
+              <g key={li}>
+                <polyline points={points} fill="none" stroke={line.color} strokeWidth="2.5" strokeLinejoin="round" />
+                {data.map((d,i) => {
+                  const x = pad.left + (i / Math.max(data.length-1, 1)) * innerW;
+                  const y = pad.top + innerH - ((d[line.key] - minV) / range) * innerH;
+                  return <circle key={i} cx={x} cy={y} r="4" fill={line.color} />;
+                })}
+                <text x={w - pad.right + 6} y={pad.top + 12 + li * 18} fontSize="10" fill={line.color} fontWeight="600">{line.label}</text>
+              </g>
+            );
+          })}
+        </svg>
+      );
+    }
+
+    // ─── FileUpload Component ──────────────────────────
+    function FileUpload({ onFilesParsed }) {
+      const [dragActive, setDragActive] = useState(false);
+      const [files, setFiles] = useState([]);
+      const inputRef = useRef(null);
+
+      const handle = useCallback(async (fl) => {
+        if (!fl.length) return;
+        setFiles(Array.from(fl).map(f => f.name));
+        const rows = await parseFiles(fl);
+        onFilesParsed(rows);
+      }, [onFilesParsed]);
+
+      return (
+        <div
+          className={`drop-zone ${dragActive ? 'active' : ''}`}
+          onDrop={(e) => { e.preventDefault(); setDragActive(false); handle(e.dataTransfer.files); }}
+          onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+          onDragLeave={() => setDragActive(false)}
+          onClick={() => inputRef.current?.click()}
+        >
+          <input ref={inputRef} type="file" multiple accept=".xlsx,.xls,.csv" className="hidden"
+            onChange={(e) => handle(e.target.files)} />
+          <svg className="mx-auto h-10 w-10 text-gray-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+          <p className="text-sm text-gray-600 font-medium">Drop Excel/CSV files here or click to browse</p>
+          <p className="text-xs text-gray-400 mt-1">Supports multiple files — merged by city + month</p>
+          {files.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1 justify-center">
+              {files.map((f,i) => <span key={i} className="bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded-full">{f}</span>)}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ─── Main App ──────────────────────────────────────
+    function App() {
+      const [rawRows, setRawRows] = useState([]);
+      const [city, setCity] = useState('__all__');
+      const [month, setMonth] = useState('__all__');
+
+      const aggregated = useMemo(() => aggregateData(rawRows), [rawRows]);
+      const cities = useMemo(() => getUniqueCities(aggregated), [aggregated]);
+      const months = useMemo(() => getUniqueMonths(aggregated), [aggregated]);
+      const filtered = useMemo(() => filterData(aggregated, city, month), [aggregated, city, month]);
+      const metrics = useMemo(() => computeMetrics(filtered), [filtered]);
+      const byMonth = useMemo(() => aggregateByMonth(filtered), [filtered]);
+      const byCityCancelled = useMemo(() => aggregateByCityCancelled(filtered), [filtered]);
+
+      useEffect(() => { setCity('__all__'); setMonth('__all__'); }, [rawRows]);
+
+      // Calculator state
+      const [currentUtr, setCurrentUtr] = useState('');
+      const [targetUtr, setTargetUtr] = useState('');
+      const [currentDt, setCurrentDt] = useState('');
+      const [currentRiders, setCurrentRiders] = useState('');
+
+      useEffect(() => {
+        if (metrics.avgUtr && !currentUtr) setCurrentUtr(metrics.avgUtr.toFixed(1));
+        if (metrics.avgDt && !currentDt) setCurrentDt(metrics.avgDt.toFixed(1));
+        if (metrics.activeRiders && !currentRiders) setCurrentRiders(Math.round(metrics.activeRiders));
+      }, [metrics]);
+
+      const cu = parseFloat(currentUtr)||0;
+      const tu = parseFloat(targetUtr)||0;
+      const cr = parseFloat(currentRiders)||0;
+      const ridersNeeded = tu>0 && cu>0 ? cr*(cu/tu) : 0;
+      const additionalRiders = ridersNeeded - cr;
+      const expectedDt = cu>0 && tu>0 ? (parseFloat(currentDt)||0)*(tu/cu) : 0;
+      const showResults = tu>0 && cu>0 && cr>0;
+
+      return (
+        <div className="min-h-screen bg-gray-50">
+          <header className="bg-white border-b border-gray-200 px-4 md:px-8 py-4">
+            <div className="max-w-7xl mx-auto flex items-center justify-between">
+              <h1 className="text-xl md:text-2xl font-bold text-gray-900">Ops Performance Dashboard</h1>
+              <span className="text-xs text-gray-400">v1.0 — client-side only</span>
+            </div>
+          </header>
+
+          <main className="max-w-7xl mx-auto px-4 md:px-8 py-6 space-y-6">
+            <FileUpload onFilesParsed={setRawRows} />
+
+            {rawRows.length > 0 && (
+              <>
+                {/* Filters */}
+                <div className="flex flex-wrap gap-3 items-center">
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-medium text-gray-600">City</label>
+                    <select className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white" value={city} onChange={(e) => setCity(e.target.value)}>
+                      <option value="__all__">All Cities</option>
+                      {cities.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-medium text-gray-600">Month</label>
+                    <select className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white" value={month} onChange={(e) => setMonth(e.target.value)}>
+                      <option value="__all__">All Months</option>
+                      {months.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Metric Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {[
+                    { label:'Total Orders', value: metrics.totalOrders.toLocaleString(), color:'text-indigo-600' },
+                    { label:'Avg UTR', value: metrics.avgUtr.toFixed(1)+'%', color:'text-emerald-600' },
+                    { label:'Avg Delivery Time', value: metrics.avgDt.toFixed(1)+' min', color:'text-amber-600' },
+                    { label:'Logistics Cancellations', value: metrics.totalCancelled.toLocaleString(), color:'text-rose-600' },
+                    { label:'Active Riders', value: Math.round(metrics.activeRiders).toLocaleString(), color:'text-blue-600' },
+                  ].map(c => (
+                    <div key={c.label} className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 flex flex-col gap-1">
+                      <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">{c.label}</span>
+                      <span className={`text-2xl font-bold ${c.color}`}>{c.value}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Charts */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-3">Orders by Month</h3>
+                    <SimpleBarChart data={byMonth} xKey="month" yKey="orders" />
+                  </div>
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-3">UTR & Delivery Time Trend</h3>
+                    <SimpleLineChart data={byMonth} lines={[
+                      { key:'utr', label:'UTR %', color:'#6366f1' },
+                      { key:'dt', label:'DT (min)', color:'#f97316' },
+                    ]} />
+                  </div>
+                </div>
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-3">Logistics Cancellations by City</h3>
+                  <SimpleBarChart data={byCityCancelled} xKey="city" yKey="cancelled" color="#f43f5e" horizontal height={Math.max(100, byCityCancelled.length * 40 + 20)} />
+                </div>
+
+                {/* Calculator */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-1">Rider Planning Calculator</h3>
+                  <p className="text-xs text-gray-400 mb-4">Linear estimate — not a guarantee. Adjust inputs to explore scenarios.</p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
+                    {[
+                      {label:'Current UTR (%)', value:currentUtr, onChange:setCurrentUtr},
+                      {label:'Target UTR (%)', value:targetUtr, onChange:setTargetUtr},
+                      {label:'Current DT (min)', value:currentDt, onChange:setCurrentDt},
+                      {label:'Target DT (min)', value:'', onChange:()=>{}, disabled:true, hint:'auto-calculated'},
+                      {label:'Current Riders', value:currentRiders, onChange:setCurrentRiders},
+                    ].map(({label,value,onChange,disabled,hint}) => (
+                      <div key={label} className="flex flex-col gap-1">
+                        <label className="text-xs font-medium text-gray-600">{label}</label>
+                        <input type="number"
+                          className={`border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 ${disabled ? 'bg-gray-50 text-gray-500' : ''}`}
+                          value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={hint||''} />
+                      </div>
+                    ))}
+                  </div>
+                  {showResults && (
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 text-center flex flex-col items-center gap-1">
+                        <span className="text-3xl font-bold text-indigo-600">{Math.ceil(ridersNeeded)}</span>
+                        <span className="text-xs font-medium text-gray-500 uppercase">Riders Needed</span>
+                      </div>
+                      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 text-center flex flex-col items-center gap-1">
+                        <span className={`text-3xl font-bold ${additionalRiders > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                          {additionalRiders > 0 ? '+' : ''}{Math.ceil(additionalRiders)}
+                        </span>
+                        <span className="text-xs font-medium text-gray-500 uppercase">Additional Riders</span>
+                      </div>
+                      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 text-center flex flex-col items-center gap-1">
+                        <span className="text-3xl font-bold text-indigo-600">{expectedDt.toFixed(1)}</span>
+                        <span className="text-xs font-medium text-gray-500 uppercase">Expected DT (min)</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* v2 Placeholder */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 border-dashed">
+                  <h3 className="text-lg font-semibold text-gray-400 mb-2">Looker / BI Integration (v2)</h3>
+                  <p className="text-sm text-gray-400">Reserved for future direct connection to Looker or another BI data source.</p>
+                  <pre className="mt-2 text-xs bg-gray-50 rounded p-3 text-gray-400 overflow-x-auto">
+{`// v2 config placeholder
+const BI_CONFIG = {
+  provider: null,
+  endpoint: null,
+  apiKey: null,
+  dataset: null,
+};`}
+                  </pre>
+                </div>
+              </>
+            )}
+
+            {rawRows.length === 0 && (
+              <div className="text-center py-20 text-gray-400">
+                <svg className="mx-auto h-16 w-16 mb-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <p className="text-lg font-medium">No data loaded</p>
+                <p className="text-sm mt-1">Upload an Excel or CSV file to get started</p>
+              </div>
+            )}
+          </main>
+
+          <footer className="text-center text-xs text-gray-400 py-4 border-t border-gray-200 bg-white mt-8">
+            Ops Performance Dashboard — all data stays in your browser session only
+          </footer>
+        </div>
+      );
+    }
+
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(React.createElement(App));
   </script>
