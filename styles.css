@@ -1,0 +1,19 @@
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+.metric-card{@apply bg-white rounded-xl shadow-sm border border-gray-100 p-5 flex flex-col gap-1}
+.metric-label{@apply text-xs font-medium text-gray-500 uppercase tracking-wider}
+.metric-value{@apply text-2xl font-bold text-gray-900}
+.chart-card{@apply bg-white rounded-xl shadow-sm border border-gray-100 p-5}
+.section-title{@apply text-lg font-semibold text-gray-800 mb-3}
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield}
+.drop-zone{@apply border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer transition-colors}
+.drop-zone:hover,.drop-zone.active{@apply border-brand-400 bg-brand-50}
+.result-card{@apply bg-white rounded-xl shadow-sm border border-gray-100 p-4 text-center flex flex-col items-center gap-1}
+.result-card .value{@apply text-3xl font-bold text-brand-600}
+.result-card .label{@apply text-xs font-medium text-gray-500 uppercase tracking-wider}
+@media(max-width:640px){
+  .metric-value{font-size:1.25rem}
+  .result-card .value{font-size:1.5rem}
+}
