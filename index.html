@@ -171,6 +171,24 @@
       return matches.reduce((s, r) => s + r.dt, 0) / matches.length;
     }
 
+    function computeYoYOrderGrowth(aggregatedData, city, month) {
+      if (!month || month === '__all__' || !aggregatedData.length) return null;
+      const parts = month.split('-');
+      const year = parseInt(parts[0]);
+      const monthNum = parts[1];
+      const prevMonth = (year - 1) + '-' + monthNum;
+
+      const currentOrders = aggregatedData
+        .filter(r => r.month === month && (city === '__all__' || r.city === city))
+        .reduce((s, r) => s + r.orders, 0);
+      const prevOrders = aggregatedData
+        .filter(r => r.month === prevMonth && (city === '__all__' || r.city === city))
+        .reduce((s, r) => s + r.orders, 0);
+
+      if (prevOrders <= 0) return null;
+      return ((currentOrders - prevOrders) / prevOrders) * 100;
+    }
+
     function aggregateByMonth(filtered) {
       const bm = {};
       filtered.forEach((r) => {
@@ -441,16 +459,24 @@
 
                 {/* Metric Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-                  {[
-                    { label:'Total Orders', value: metrics.totalOrders.toLocaleString(), color:'text-indigo-600' },
-                    { label:'Avg UTR', value: metrics.avgUtr.toFixed(1)+'%', color:'text-emerald-600' },
-                    { label:'Avg Delivery Time', value: metrics.avgDt.toFixed(1)+' min', color:'text-amber-600' },
-                    { label:'Logistics Cancellations', value: metrics.totalCancelled.toLocaleString(), color:'text-rose-600' },
-                    { label:'Active Riders', value: Math.round(metrics.activeRiders).toLocaleString(), color:'text-blue-600' },
-                  ].map(c => (
+                  {(() => {
+                    const yoyGrowth = computeYoYOrderGrowth(aggregated, city, month);
+                    return [
+                      { label:'Total Orders', value: metrics.totalOrders.toLocaleString(), color:'text-indigo-600', growth: yoyGrowth },
+                      { label:'Avg UTR', value: metrics.avgUtr.toFixed(1)+'%', color:'text-emerald-600', growth: null },
+                      { label:'Avg Delivery Time', value: metrics.avgDt.toFixed(1)+' min', color:'text-amber-600', growth: null },
+                      { label:'Logistics Cancellations', value: metrics.totalCancelled.toLocaleString(), color:'text-rose-600', growth: null },
+                      { label:'Active Riders', value: Math.round(metrics.activeRiders).toLocaleString(), color:'text-blue-600', growth: null },
+                    ];
+                  })().map(c => (
                     <div key={c.label} className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 flex flex-col gap-1">
                       <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">{c.label}</span>
                       <span className={`text-2xl font-bold ${c.color}`}>{c.value}</span>
+                      {c.growth !== null && (
+                        <span className={`text-xs font-semibold mt-0.5 ${c.growth >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {c.growth >= 0 ? '+' : ''}{c.growth.toFixed(1)}% YoY
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>
