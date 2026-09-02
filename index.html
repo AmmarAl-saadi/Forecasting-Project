@@ -157,6 +157,20 @@
       };
     }
 
+    function computeYoYAvgDt(aggregatedData, city, month) {
+      if (!month || month === '__all__' || !aggregatedData.length) return 0;
+      const monthNum = month.split('-')[1];
+      const matches = aggregatedData.filter((r) => {
+        if (!r.month || r.dt <= 0) return false;
+        const rMonthNum = r.month.split('-')[1];
+        if (rMonthNum !== monthNum) return false;
+        if (city && city !== '__all__' && r.city !== city) return false;
+        return true;
+      });
+      if (!matches.length) return 0;
+      return matches.reduce((s, r) => s + r.dt, 0) / matches.length;
+    }
+
     function aggregateByMonth(filtered) {
       const bm = {};
       filtered.forEach((r) => {
@@ -352,9 +366,14 @@
 
       useEffect(() => {
         if (metrics.avgUtr && !currentUtr) setCurrentUtr(metrics.avgUtr.toFixed(1));
-        if (metrics.avgDt && !currentDt) setCurrentDt(metrics.avgDt.toFixed(1));
+        const yoyDt = computeYoYAvgDt(aggregated, city, month);
+        if (yoyDt > 0 && !currentDt) {
+          setCurrentDt(yoyDt.toFixed(1));
+        } else if (metrics.avgDt && !currentDt) {
+          setCurrentDt(metrics.avgDt.toFixed(1));
+        }
         if (metrics.activeRiders && !currentRiders) setCurrentRiders(Math.round(metrics.activeRiders));
-      }, [metrics]);
+      }, [metrics, aggregated, city, month]);
 
       const cu = parseFloat(currentUtr)||0;
       const tu = parseFloat(targetUtr)||0;
@@ -363,6 +382,7 @@
       const additionalRiders = ridersNeeded - cr;
       const expectedDt = cu>0 && tu>0 ? (parseFloat(currentDt)||0)*(tu/cu) : 0;
       const showResults = tu>0 && cu>0 && cr>0;
+      const yoyDtAvailable = computeYoYAvgDt(aggregated, city, month) > 0;
 
       let supplyStatus = null;
       let supplyColor = '';
@@ -462,12 +482,15 @@
                     {[
                       {label:'Current UTR (%)', value:currentUtr, onChange:setCurrentUtr},
                       {label:'Target UTR (%)', value:targetUtr, onChange:setTargetUtr},
-                      {label:'Current DT (min)', value:currentDt, onChange:setCurrentDt},
+                      {label:'Current DT (min)', value:currentDt, onChange:setCurrentDt, badge: yoyDtAvailable ? 'YoY avg' : null},
                       {label:'Target DT (min)', value:'', onChange:()=>{}, disabled:true, hint:'auto-calculated'},
                       {label:'Current Riders', value:currentRiders, onChange:setCurrentRiders},
-                    ].map(({label,value,onChange,disabled,hint}) => (
+                    ].map(({label,value,onChange,disabled,hint,badge}) => (
                       <div key={label} className="flex flex-col gap-1">
-                        <label className="text-xs font-medium text-gray-600">{label}</label>
+                        <label className="text-xs font-medium text-gray-600 flex items-center gap-1">
+                          {label}
+                          {badge && <span className="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0.5 rounded-full font-semibold">{badge}</span>}
+                        </label>
                         <input type="number"
                           className={`border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 ${disabled ? 'bg-gray-50 text-gray-500' : ''}`}
                           value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={hint||''} />
