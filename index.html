@@ -364,6 +364,29 @@
       const expectedDt = cu>0 && tu>0 ? (parseFloat(currentDt)||0)*(tu/cu) : 0;
       const showResults = tu>0 && cu>0 && cr>0;
 
+      let supplyStatus = null;
+      let supplyColor = '';
+      let supplyBg = '';
+      let supplyIcon = '';
+      if (showResults) {
+        if (cu > tu) {
+          supplyStatus = 'Under Supply';
+          supplyColor = 'text-rose-700';
+          supplyBg = 'bg-rose-50 border-rose-200';
+          supplyIcon = '\u25B2';
+        } else if (cu < tu) {
+          supplyStatus = 'Over Supply';
+          supplyColor = 'text-blue-700';
+          supplyBg = 'bg-blue-50 border-blue-200';
+          supplyIcon = '\u25BC';
+        } else {
+          supplyStatus = 'Optimal Supply';
+          supplyColor = 'text-emerald-700';
+          supplyBg = 'bg-emerald-50 border-emerald-200';
+          supplyIcon = '\u2713';
+        }
+      }
+
       return (
         <div className="min-h-screen bg-gray-50">
           <header className="bg-white border-b border-gray-200 px-4 md:px-8 py-4">
@@ -451,6 +474,21 @@
                       </div>
                     ))}
                   </div>
+                  {showResults && (
+                    <div className={`rounded-xl border p-4 mb-4 flex items-center gap-3 ${supplyBg}`}>
+                      <span className={`text-2xl ${supplyColor}`}>{supplyIcon}</span>
+                      <div>
+                        <span className={`text-lg font-bold ${supplyColor}`}>{supplyStatus}</span>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {cu > tu
+                            ? `Current UTR (${cu}%) is above target (${tu}%) — riders are overloaded, need more capacity`
+                            : cu < tu
+                            ? `Current UTR (${cu}%) is below target (${tu}%) — excess rider capacity available`
+                            : `Current UTR matches target (${tu}%) — staffing is optimal`}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                   {showResults && (
                     <div className="grid grid-cols-3 gap-3">
                       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 text-center flex flex-col items-center gap-1">
