@@ -120,6 +120,7 @@
 
     function aggregateData(rows, riderMasterCounts) {
       const riderByCity = riderMasterCounts || {};
+      const hasRidersOnly = Object.keys(riderByCity).length > 0 && rows.length === 0;
       const norm = rows.map((r) => ({
         city: String(r.city||'').trim(),
         month: normalizeMonth(r.date || r.month),
@@ -141,6 +142,15 @@
         if (r.dt) { g.dtSum += r.dt; g.dtCnt++; }
         if (r.riders > 0) { g.riders += r.riders; g.riderCnt++; }
       });
+
+      // If only rider master data (no orders file), create one entry per city
+      if (hasRidersOnly) {
+        Object.entries(riderByCity).forEach(([city, count]) => {
+          if (!byKey[city]) {
+            byKey[city] = {city, month:'__riders__', orders:0, utrSum:0, utrCnt:0, dtSum:0, dtCnt:0, cancelled:0, riders:count, riderCnt:1};
+          }
+        });
+      }
 
       return Object.values(byKey).map((g) => ({
         city:g.city, month:g.month, orders:g.orders,
@@ -233,7 +243,7 @@
     }
 
     function getUniqueCities(data) { return [...new Set(data.map(r => r.city).filter(Boolean))].sort(); }
-    function getUniqueMonths(data) { return [...new Set(data.map(r => r.month).filter(Boolean))].sort(); }
+    function getUniqueMonths(data) { return [...new Set(data.map(r => r.month).filter(m => m && m !== '__riders__'))].sort(); }
 
     // ─── SVG Bar Chart (no Recharts) ──────────────────
     function SimpleBarChart({ data, xKey, yKey, color, horizontal, height }) {
