@@ -37,13 +37,14 @@
 
     // ─── Column Detection ──────────────────────────────
     const COLUMN_KEYWORDS = {
-      city: ['city','market','location','region'],
+      city: ['city','city name','market','location','region'],
       date: ['date','month','period','time','year-month','yearmonth'],
       orders: ['orders','order count','num orders','number of orders','order volume','total orders','volume'],
       utr: ['utr','utilization','utilization rate'],
       dt: ['dt','delivery time','delivery minutes','delivery time (min)','avg delivery','average delivery'],
       cancelled: ['cancelled','canceled','cancellations','logistics cancel','logistics cancels','cancelled orders','cancel'],
       riders: ['riders','active riders','rider count','active rider count','riders count','headcount'],
+      active_flag: ['active rider'],
     };
 
     function detectColumn(header) {
@@ -75,11 +76,17 @@
                 const headers = Object.keys(json[0]);
                 const mapping = {};
                 headers.forEach((h) => { const d = detectColumn(h); if (d) mapping[h] = d; });
-                json.forEach((row) => {
-                  const parsed = {};
-                  Object.entries(row).forEach(([k, v]) => { const f = mapping[k]; if (f) parsed[f] = v; });
-                  if (Object.keys(parsed).length) allRows.push(parsed);
-                });
+              const hasActiveFlag = Object.values(mapping).includes('active_flag');
+              json.forEach((row) => {
+                const parsed = {};
+                Object.entries(row).forEach(([k, v]) => { const f = mapping[k]; if (f && f !== 'active_flag') parsed[f] = v; });
+                if (hasActiveFlag) {
+                  const flagCol = Object.keys(mapping).find(k => mapping[k] === 'active_flag');
+                  const flagVal = String(row[flagCol] || '').trim().toLowerCase();
+                  parsed.riders = (flagVal === 'yes' || flagVal === 'true' || flagVal === '1') ? 1 : 0;
+                }
+                if (Object.keys(parsed).length) allRows.push(parsed);
+              });
               });
             } catch (err) { console.error('Parse error:', file.name, err); }
             done++;
