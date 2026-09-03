@@ -380,6 +380,7 @@
       const [currentUtr, setCurrentUtr] = useState('');
       const [targetUtr, setTargetUtr] = useState('');
       const [currentDt, setCurrentDt] = useState('');
+      const [targetDt, setTargetDt] = useState('23');
       const [currentRiders, setCurrentRiders] = useState('');
 
       useEffect(() => {
@@ -396,9 +397,11 @@
       const cu = parseFloat(currentUtr)||0;
       const tu = parseFloat(targetUtr)||0;
       const cr = parseFloat(currentRiders)||0;
+      const cdt = parseFloat(currentDt)||0;
+      const tdt = parseFloat(targetDt)||0;
       const ridersNeeded = tu>0 && cu>0 ? cr*(cu/tu) : 0;
       const additionalRiders = ridersNeeded - cr;
-      const expectedDt = cu>0 && tu>0 ? (parseFloat(currentDt)||0)*(tu/cu) : 0;
+      const expectedDt = cu>0 && tu>0 ? cdt*(tu/cu) : 0;
       const showResults = tu>0 && cu>0 && cr>0;
       const yoyDtAvailable = computeYoYAvgDt(aggregated, city, month) > 0;
 
@@ -508,8 +511,8 @@
                     {[
                       {label:'Current UTR (%)', value:currentUtr, onChange:setCurrentUtr},
                       {label:'Target UTR (%)', value:targetUtr, onChange:setTargetUtr},
-                      {label:'Current DT (min)', value:currentDt, onChange:setCurrentDt, badge: yoyDtAvailable ? 'YoY avg' : null},
-                      {label:'Target DT (min)', value:'', onChange:()=>{}, disabled:true, hint:'auto-calculated'},
+                      {label:'Current DT (min)', value:currentDt, onChange:()=>{}, disabled:true, badge: yoyDtAvailable ? 'YoY avg' : null},
+                      {label:'Target DT (min)', value:targetDt, onChange:setTargetDt},
                       {label:'Current Riders', value:currentRiders, onChange:setCurrentRiders},
                     ].map(({label,value,onChange,disabled,hint,badge}) => (
                       <div key={label} className="flex flex-col gap-1">
