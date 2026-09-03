@@ -62,8 +62,9 @@
       return new Promise((resolve) => {
         const allRows = [];
         const riderMasterCounts = {};
+        const debug = [];
         let done = 0;
-        if (!fileList.length) { resolve({rows:[],riderMasterCounts:{}}); return; }
+        if (!fileList.length) { resolve({rows:[],riderMasterCounts:{},debug:[]}); return; }
         Array.from(fileList).forEach((file) => {
           const reader = new FileReader();
           reader.onload = (e) => {
@@ -77,6 +78,7 @@
                 const headers = Object.keys(json[0]);
                 const mapping = {};
                 headers.forEach((h) => { const d = detectColumn(h); if (d) mapping[h] = d; });
+                debug.push({ file: file.name, sheet: sn, headers, mapping, sampleRows: json.slice(0, 3) });
                 const hasActiveFlag = Object.values(mapping).includes('active_flag');
                 if (hasActiveFlag) {
                   const flagCol = Object.keys(mapping).find(k => mapping[k] === 'active_flag');
@@ -98,9 +100,9 @@
               });
             } catch (err) { console.error('Parse error:', file.name, err); }
             done++;
-            if (done === fileList.length) resolve({rows: allRows, riderMasterCounts});
+            if (done === fileList.length) resolve({rows: allRows, riderMasterCounts, debug});
           };
-          reader.onerror = () => { done++; if (done === fileList.length) resolve({rows: allRows, riderMasterCounts}); };
+          reader.onerror = () => { done++; if (done === fileList.length) resolve({rows: allRows, riderMasterCounts, debug}); };
           reader.readAsArrayBuffer(file);
         });
       });
@@ -394,6 +396,7 @@
       const [riderMasterCounts, setRiderMasterCounts] = useState({});
       const [city, setCity] = useState('__all__');
       const [month, setMonth] = useState('__all__');
+      const [debugInfo, setDebugInfo] = useState(null);
 
       const aggregated = useMemo(() => aggregateData(rawRows, riderMasterCounts), [rawRows, riderMasterCounts]);
       const cities = useMemo(() => getUniqueCities(aggregated), [aggregated]);
@@ -467,7 +470,25 @@
           </header>
 
           <main className="max-w-7xl mx-auto px-4 md:px-8 py-6 space-y-6">
-            <FileUpload onFilesParsed={(result) => { setRawRows(result.rows); setRiderMasterCounts(result.riderMasterCounts); }} />
+            <FileUpload onFilesParsed={(result) => { setRawRows(result.rows); setRiderMasterCounts(result.riderMasterCounts); setDebugInfo(result.debug); }} />
+
+            {debugInfo && debugInfo.length > 0 && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-xs font-mono">
+                <p className="font-bold text-yellow-800 mb-2">Debug — Detected Columns:</p>
+                {debugInfo.map((d, i) => (
+                  <div key={i} className="mb-2">
+                    <p className="text-yellow-700">{d.file} / {d.sheet}</p>
+                    <p>Headers: {d.headers.join(' | ')}</p>
+                    <p>Mapping: {JSON.stringify(d.mapping)}</p>
+                    <p>Sample row 1: {JSON.stringify(d.sampleRows[0])}</p>
+                    <p>Sample row 2: {JSON.stringify(d.sampleRows[1])}</p>
+                    {Object.values(d.mapping).includes('active_flag') && (
+                      <p className="text-green-700 font-bold">Rider master detected! Cities: {d.sampleRows.map(r => r[Object.keys(d.mapping).find(k => d.mapping[k] === 'city')]).filter(Boolean).join(', ')}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {rawRows.length > 0 && (
               <>
