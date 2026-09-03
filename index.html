@@ -119,7 +119,17 @@
         dt: parseFloat(r.dt)||0,
         cancelled: parseFloat(r.cancelled)||0,
         riders: parseFloat(r.riders)||0,
+        _hasMonth: !!(r.date || r.month),
       }));
+
+      // Pre-compute rider totals per city from rows that have no month (rider master data)
+      const riderByCity = {};
+      norm.forEach((r) => {
+        if (r.riders > 0 && !r._hasMonth) {
+          riderByCity[r.city] = (riderByCity[r.city] || 0) + r.riders;
+        }
+      });
+
       const byKey = {};
       norm.forEach((r) => {
         const key = r.city + '|||' + r.month;
@@ -129,15 +139,23 @@
         g.cancelled += r.cancelled;
         if (r.utr) { g.utrSum += r.utr; g.utrCnt++; }
         if (r.dt) { g.dtSum += r.dt; g.dtCnt++; }
-        if (r.riders) { g.riders += r.riders; g.riderCnt++; }
+        if (r.riders && r._hasMonth) { g.riders += r.riders; g.riderCnt++; }
       });
-      return Object.values(byKey).map((g) => ({
-        city:g.city, month:g.month, orders:g.orders,
-        utr: g.utrCnt ? g.utrSum/g.utrCnt : 0,
-        dt: g.dtCnt ? g.dtSum/g.dtCnt : 0,
-        cancelled: g.cancelled,
-        riders: g.riderCnt ? g.riders/g.riderCnt : 0,
-      }));
+
+      // Fill rider count from master data for city+month entries that have no riders yet
+      return Object.values(byKey).map((g) => {
+        let riderCount = g.riderCnt ? g.riders / g.riderCnt : 0;
+        if (riderCount === 0 && riderByCity[g.city]) {
+          riderCount = riderByCity[g.city];
+        }
+        return {
+          city:g.city, month:g.month, orders:g.orders,
+          utr: g.utrCnt ? g.utrSum/g.utrCnt : 0,
+          dt: g.dtCnt ? g.dtSum/g.dtCnt : 0,
+          cancelled: g.cancelled,
+          riders: riderCount,
+        };
+      });
     }
 
     function filterData(data, city, month) {
