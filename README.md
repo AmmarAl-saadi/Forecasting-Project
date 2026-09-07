@@ -1,63 +1,46 @@
-# Ops Performance Dashboard
+# Ops Performance Dashboard — Jordan
 
-A static, client-side-only dashboard for tracking order volume, rider utilization (UTR), delivery time (DT), and logistics cancellations by city and month.
+Single-page dashboard for Jordan Delivery Operations metrics (Orders, UTR, Delivery Time, Fail Rate). Runs entirely in the browser — no build step, no backend, no account required.
 
-## Features
+## Quick start
 
-- **File upload** — drag-and-drop or click to upload `.xlsx` / `.csv` files (supports multiple files, merged by city + month)
-- **Auto column detection** — detects city, date, orders, UTR, DT, cancelled orders, and rider count by keyword matching
-- **Headline metrics** — total orders, avg UTR, avg delivery time, logistics cancellations, active riders
-- **Charts** — orders by month (bar), UTR & DT trend (dual-line), cancellations by city (horizontal bar)
-- **Filters** — city and month filters applied to all metrics and charts
-- **Rider planning calculator** — linear estimate that converts UTR/DT targets into rider headcount needs
-- **Responsive** — works on desktop and mobile
-- **Privacy** — all data stays in your browser; nothing is uploaded to any server
+Open `index.html` directly in any modern browser. The dashboard loads with embedded data (March–August) immediately.
 
-## Running Locally
+To load a new month's data, click the upload zone and select your `.xlsx` workbook. The workbook must have sheets named **Orders**, **UTR**, **Delivery Time**, and **Fail Rate**, each with a `City` header row followed by month columns.
 
-No build step required. Just open `index.html` in a browser:
+## Tabs
 
-```bash
-# Option 1 — double-click index.html (works in most browsers)
-# Option 2 — serve with any static file server
-npx serve .
-# or
-python -m http.server 8000
+| Tab | What it shows |
+|-----|---------------|
+| Overview | KPI cards, supply status, orders by city |
+| By City | Full metrics table + UTR/DT bar charts |
+| Trends | Month-over-month line charts for all metrics |
+| Fail Rate | Net fail rate + rider-fault breakdown |
+| Supply | Target sliders, status logic legend, per-city status table |
+| Riders | Active rider inference, riders needed, gap analysis |
+
+## Supply status logic
+
+| Status | Condition |
+|--------|-----------|
+| ✓ Optimal | UTR ≥ target **and** DT ≤ target |
+| ⬇ Under Supply | UTR ≥ target **and** DT > target (busy riders, slow deliveries) |
+| ⬆ Over Supply | UTR < target **and** DT ≤ target (excess riders, fast deliveries) |
+| ◈ Mixed | UTR < target **and** DT > target |
+
+## Rider calculation
+
+```
+Active Riders (inferred) = Monthly Orders ÷ (UTR × Days)
+Riders Needed            = Monthly Orders ÷ (Target UTR × Days)
+Gap                      = Riders Needed − Active Riders
 ```
 
-Then open `http://localhost:8000` (or the file directly).
+UTR is treated as *average orders completed per active rider per day*. Adjust the **Days in Period** slider on the Riders tab to match your reporting window. When a specific month is selected the slider auto-populates from the calendar days in that month.
 
-## Data Format
+## Tech stack
 
-### Orders Report (.xlsx or .csv)
-
-Columns (auto-detected by keyword):
-
-| Column | Keywords detected |
-|--------|-------------------|
-| City   | city, market, location, region |
-| Date/Month | date, month, period, year-month |
-| Orders | orders, order count, volume |
-| UTR    | utr, utilization |
-| DT     | dt, delivery time |
-| Cancelled | cancelled, logistics cancel |
-
-### Riders Report (.xlsx or .csv)
-
-| Column | Keywords detected |
-|--------|-------------------|
-| City   | city, market, location |
-| Date/Month | date, month |
-| Active Riders | riders, active riders, rider count |
-
-## Tech Stack
-
-- React 18 (via CDN)
-- Tailwind CSS (via CDN)
-- SheetJS / xlsx (via CDN) for Excel/CSV parsing
-- Recharts (via CDN) for charting
-- Zero build tools, zero npm dependencies
-
-## License
-
-MIT
+- React 18 (CDN, no build step)
+- Tailwind CSS (CDN)
+- SheetJS / xlsx (CDN)
+- All code inline in `index.html`
