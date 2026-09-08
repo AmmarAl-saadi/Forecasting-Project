@@ -528,23 +528,28 @@ function App() {
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div className="flex items-center gap-4">
           {/* Talabat logo */}
-          <svg width="130" height="36" viewBox="0 0 130 36" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="talabat">
-            <rect width="36" height="36" rx="8" fill="#FF6B00"/>
-            {/* delivery bag */}
-            <path d="M10 15 C10 11 13 9 18 9 C23 9 26 11 26 15 L26 25 C26 27 24.5 28 23 28 L13 28 C11.5 28 10 27 10 25 Z" fill="white"/>
-            <path d="M14 15 C14 12.5 15.8 11 18 11 C20.2 11 22 12.5 22 15" stroke="#FF6B00" strokeWidth="2" strokeLinecap="round" fill="none"/>
-            <circle cx="15" cy="22" r="1.5" fill="#FF6B00"/>
-            <circle cx="21" cy="22" r="1.5" fill="#FF6B00"/>
-            {/* wordmark */}
-            <text x="46" y="25" fontFamily="system-ui, -apple-system, sans-serif" fontWeight="800" fontSize="20" fill="white" letterSpacing="-0.5">talabat</text>
-          </svg>
+          <div style={{
+            border: '2px solid #FF6B00',
+            borderRadius: '8px',
+            padding: '5px 14px',
+            background: 'rgba(255,107,0,0.06)',
+            boxShadow: '0 0 14px rgba(255,107,0,0.35), inset 0 0 8px rgba(255,107,0,0.06)',
+          }}>
+            <span style={{
+              fontFamily: 'system-ui, -apple-system, sans-serif',
+              fontWeight: 800,
+              fontSize: '20px',
+              color: '#FF6B00',
+              letterSpacing: '-0.5px',
+              textShadow: '0 0 10px rgba(255,107,0,0.5)',
+            }}>talabat</span>
+          </div>
           <div className="h-8 w-px bg-stone-700"/>
           <div>
             <p className="text-xs text-stone-500 uppercase tracking-widest">Ops Performance Dashboard</p>
             <p className="text-xs text-stone-600 mt-0.5">Jordan · All data stays in your browser</p>
           </div>
         </div>
-        {metrics && <StatusBadge status={metrics.status} />}
       </div>
 
       {/* ── Upload ── */}
