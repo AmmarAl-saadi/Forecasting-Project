@@ -27,7 +27,7 @@ Columns are auto-matched by keyword (`city`, `month`, `utr`, `successful/order`,
 | By City | Full metrics table + UTR/DT bar charts |
 | Trends | Month-over-month line charts for all metrics |
 | Fail Rate | Net fail rate + breakdown (only shown when the file contains fail-rate data) |
-| Rider Plan | Target sliders, status legend, per-city rider plan, supply status table |
+| Rider Plan | Target sliders, status legend, per-city rider plan table |
 
 ## Supply status logic
 
