@@ -183,6 +183,31 @@ function serialToMonth(v) {
   return s;
 }
 
+// 'YYYY-MM' → next calendar month
+function nextMonthStr(m) {
+  const p = String(m).split('-');
+  const d = new Date(Date.UTC(+p[0], +p[1], 1));
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+}
+
+// 'YYYY-MM' → number of days in that month
+function daysInMonthStr(m) {
+  const p = String(m).split('-');
+  return new Date(Date.UTC(+p[0], +p[1], 0)).getUTCDate();
+}
+
+function meanOf(arr) {
+  return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+// 'YYYY-MM' → 'October 2026'
+function monthLabel(m) {
+  const p = String(m).split('-');
+  return (MONTH_NAMES[+p[1] - 1] || p[1]) + ' ' + p[0];
+}
+
 // Map a long-format header row (e.g. "City City Name | ... Local Order Month | Orders UTR | ... Successful Orders | ... Actual Delivery Time | ... Total Riders")
 // to column indexes. Column order matters: 'utr' is matched before 'orders' so "Orders UTR" maps to UTR.
 function mapLongColumns(headerCells) {
@@ -532,6 +557,8 @@ function App() {
   const [monthFilter, setMonthFilter] = useState('All');
   const [targetUtr, setTargetUtr] = useState(1.8);
   const [targetDt, setTargetDt] = useState(23);
+  const [momEdit, setMomEdit] = useState('');   // '' = auto (computed from history)
+  const [siEdit, setSiEdit] = useState('');     // '' = auto
 
   const records = useMemo(() => buildRecords(dataset), [dataset]);
 
@@ -613,6 +640,81 @@ function App() {
     return { rows, totals };
   }, [records, dataset.cities, cityFilter, monthFilter, partialMonths, targetUtr, targetDt]);
 
+  // ─── Next-month forecast: Orders = Last Complete Month × MoM Rate × Seasonal Index ──
+  // Riders scale the snapshot formula by forecast growth (unit-safe: no assumption
+  // about how UTR maps to orders ÷ (riders × days)):
+  //   growth        = MoM × Seasonal Index  (= forecast orders ÷ last orders)
+  //   riders_for_utr = current × (current UTR / target UTR) × growth × (days_last / days_fc)
+  //   riders_for_dt  = current × (current DT  / target DT ) × growth × (days_last / days_fc)
+  const forecastPlan = useMemo(() => {
+    const complete = dataset.months.filter(m => !partialMonths.includes(m));
+    if (!complete.length) return null;
+    const lastM = complete[complete.length - 1];
+    const fcM = nextMonthStr(dataset.months[dataset.months.length - 1]);
+    const daysFc = daysInMonthStr(fcM);
+    const daysLast = daysInMonthStr(lastM);
+    const dayFactor = daysLast / daysFc;
+
+    const agg = {};
+    for (const m of complete) agg[m] = 0;
+    for (const r of records) {
+      if (r.orders != null && agg[r.month] !== undefined) agg[r.month] += r.orders;
+    }
+    const ratios = [];
+    for (let i = 1; i < complete.length; i++) {
+      const p = agg[complete[i - 1]], c = agg[complete[i]];
+      if (p > 0 && c > 0) ratios.push(c / p);
+    }
+    const momDefault = ratios.length ? meanOf(ratios) : 1;
+
+    const byCM = {};
+    for (const m of complete) {
+      const cm = m.slice(5);
+      (byCM[cm] = byCM[cm] || []).push(agg[m]);
+    }
+    const grand = meanOf(complete.map(m => agg[m]));
+    const fcCM = fcM.slice(5);
+    const siDefault = (byCM[fcCM] && grand > 0) ? meanOf(byCM[fcCM]) / grand : 1;
+
+    const effMom = momEdit !== '' && isFinite(parseFloat(momEdit)) && parseFloat(momEdit) > 0 ? parseFloat(momEdit) : momDefault;
+    const effSi = siEdit !== '' && isFinite(parseFloat(siEdit)) && parseFloat(siEdit) > 0 ? parseFloat(siEdit) : siDefault;
+    const growth = effMom * effSi;
+
+    const cities = cityFilter === 'All' ? dataset.cities : [cityFilter];
+    const rows = [];
+    for (const city of cities) {
+      const snap = records.find(r => r.city === city && r.month === lastM);
+      if (!snap || snap.orders == null || snap.riders == null || snap.riders <= 0 || snap.utr == null || snap.dt == null) {
+        rows.push({ city, empty: true });
+        continue;
+      }
+      const fcOrders = snap.orders * growth;
+      const needUtrRaw = targetUtr > 0 ? snap.riders * (snap.utr / targetUtr) * growth * dayFactor : 0;
+      const needDtRaw = targetDt > 0 ? snap.riders * (snap.dt / targetDt) * growth * dayFactor : 0;
+      const recommended = Math.ceil(Math.max(needUtrRaw, needDtRaw));
+      const fcUtr = snap.utr * growth * dayFactor;
+      const fcDt = snap.dt * growth * dayFactor;
+      rows.push({
+        city, empty: false, lastM,
+        lastOrders: snap.orders, fcOrders,
+        curRiders: snap.riders, curUtr: snap.utr, curDt: snap.dt,
+        needUtr: Math.ceil(needUtrRaw), needDt: Math.ceil(needDtRaw),
+        recommended, additional: recommended - snap.riders,
+        binding: needUtrRaw >= needDtRaw ? 'UTR' : 'DT',
+        fcUtr, fcDt,
+        status: calcSupplyStatus(fcUtr, targetUtr, fcDt, targetDt),
+      });
+    }
+    const valid = rows.filter(r => !r.empty);
+    const sum = k => valid.reduce((s, r) => s + r[k], 0);
+    const totals = valid.length ? {
+      lastOrders: sum('lastOrders'), fcOrders: sum('fcOrders'), curRiders: sum('curRiders'),
+      needUtr: sum('needUtr'), needDt: sum('needDt'),
+      recommended: sum('recommended'), additional: sum('additional'),
+    } : null;
+    return { lastM, fcM, daysFc, daysLast, dayFactor, momDefault, siDefault, effMom, effSi, growth, ratiosN: ratios.length, rows, totals };
+  }, [records, dataset, cityFilter, partialMonths, targetUtr, targetDt, momEdit, siEdit]);
+
   const metrics = useMemo(() => {
     if (!filteredRecords.length) return null;
     const withOrders = filteredRecords.filter(r => r.orders != null);
@@ -678,6 +780,7 @@ function App() {
     { id: 'trends',   label: 'Trends'   },
     ...(hasFailRate ? [{ id: 'fail', label: 'Fail Rate & Extras' }] : []),
     { id: 'supply',   label: 'Rider Plan' },
+    { id: 'forecast', label: 'Next Month' },
   ];
 
   const CHART_COLORS = { orders: '#FF6B00', utr: '#FF9A3C', dt: '#FFB366', fail: '#fc8181' };
@@ -724,7 +827,7 @@ function App() {
         <UploadZone
           loaded={true}
           fileName={fileName}
-          onFile={(ds, name) => { setDataset(ds); setFileName(name); setIsDefault(false); setCityFilter('All'); setMonthFilter('All'); }}
+          onFile={(ds, name) => { setDataset(ds); setFileName(name); setIsDefault(false); setCityFilter('All'); setMonthFilter('All'); setMomEdit(''); setSiEdit(''); }}
         />
       </div>
 
@@ -1026,6 +1129,164 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── NEXT MONTH ── */}
+      {activeTab === 'forecast' && forecastPlan && (
+        <div className="space-y-4">
+          {/* Forecast basis / controls */}
+          <div className="card p-4">
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+              Forecast Basis — Next Month Orders = Last Month × MoM Rate × Seasonal Index
+            </div>
+            <div className="flex flex-wrap gap-x-8 gap-y-4 items-end">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Last complete month</label>
+                <div className="text-white font-bold">{monthLabel(forecastPlan.lastM)}</div>
+                <div className="text-xs text-gray-600">{forecastPlan.lastM} · {forecastPlan.daysLast} days</div>
+              </div>
+              <div className="text-xl text-gray-600 pb-1">×</div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">MoM Rate</label>
+                <div className="flex items-center gap-2">
+                  <input type="number" step="0.005" min="0" max="5"
+                    className="rounded-lg px-2 py-1.5 text-sm w-24 text-center"
+                    value={momEdit} placeholder={forecastPlan.momDefault.toFixed(4)}
+                    onChange={e => setMomEdit(e.target.value)} />
+                  {momEdit !== '' && <button className="text-xs text-[#FF9A3C] hover:underline" onClick={() => setMomEdit('')}>reset</button>}
+                </div>
+                <div className="text-xs text-gray-600 mt-0.5">{momEdit !== '' ? 'override' : `auto: mean of ${forecastPlan.ratiosN} ratios`}</div>
+              </div>
+              <div className="text-xl text-gray-600 pb-1">×</div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Seasonal Index ({monthLabel(forecastPlan.fcM).split(' ')[0]})</label>
+                <div className="flex items-center gap-2">
+                  <input type="number" step="0.005" min="0" max="5"
+                    className="rounded-lg px-2 py-1.5 text-sm w-24 text-center"
+                    value={siEdit} placeholder={forecastPlan.siDefault.toFixed(4)}
+                    onChange={e => setSiEdit(e.target.value)} />
+                  {siEdit !== '' && <button className="text-xs text-[#FF9A3C] hover:underline" onClick={() => setSiEdit('')}>reset</button>}
+                </div>
+                <div className="text-xs text-gray-600 mt-0.5">{siEdit !== '' ? 'override' : 'auto: month avg ÷ avg month'}</div>
+              </div>
+              <div className="text-xl text-gray-600 pb-1">=</div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Forecast growth</label>
+                <div className="text-white font-bold" style={{ color: '#FF9A3C' }}>
+                  ×{forecastPlan.growth.toFixed(4)} <span className="text-sm font-medium">(+{((forecastPlan.growth - 1) * 100).toFixed(1)}%)</span>
+                </div>
+                <div className="text-xs text-gray-600">day factor ×{forecastPlan.dayFactor.toFixed(3)}</div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Forecast month</label>
+                <div className="text-white font-bold">{monthLabel(forecastPlan.fcM)}</div>
+                <div className="text-xs text-gray-600">{forecastPlan.fcM} · {forecastPlan.daysFc} days</div>
+              </div>
+            </div>
+            <p className="text-xs text-gray-600 mt-3">
+              Auto defaults are computed from your data (partial months excluded{partialMonths.length ? `: ${partialMonths.join(', ')}` : ''}). Type a value to override — planning a promo? Set your own MoM Rate.
+            </p>
+          </div>
+
+          {/* KPI cards */}
+          {forecastPlan.totals && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <MetricCard title="Forecast Month" value={monthLabel(forecastPlan.fcM)} icon="📅"
+                sub={`${forecastPlan.daysFc} days · growth ×${forecastPlan.growth.toFixed(3)}`} />
+              <MetricCard title="Forecast Orders" value={Math.round(forecastPlan.totals.fcOrders).toLocaleString()} icon="📈"
+                sub={`vs ${Math.round(forecastPlan.totals.lastOrders).toLocaleString()} in ${forecastPlan.lastM}`} />
+              <MetricCard title="Riders Needed" value={forecastPlan.totals.recommended.toLocaleString()} icon="🧑‍🤝‍🧑"
+                sub={`Targets: UTR ${targetUtr} · DT ${targetDt} min`} />
+              <MetricCard title="Additional Riders" value={(forecastPlan.totals.additional > 0 ? '+' : '') + forecastPlan.totals.additional.toLocaleString()}
+                color={forecastPlan.totals.additional > 0 ? 'metric-negative' : 'metric-positive'}
+                icon="🎯" sub={`vs ${forecastPlan.totals.curRiders.toLocaleString()} in ${forecastPlan.lastM}`} />
+            </div>
+          )}
+
+          {/* Forecast table */}
+          <div className="card p-5">
+            <div className="text-sm font-semibold text-white mb-1">Riders Needed Next Month — by city</div>
+            <div className="text-xs text-gray-500 mb-3">
+              Base: {forecastPlan.lastM} actuals × growth ×{(forecastPlan.growth).toFixed(4)} · Forecast month {forecastPlan.fcM} ({forecastPlan.daysFc} days)
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-gray-500 uppercase border-b border-gray-800">
+                    <th className="text-left py-2 pr-3">City</th>
+                    <th className="text-right py-2 pr-3">Last Mo Orders</th>
+                    <th className="text-right py-2 pr-3">Forecast Orders</th>
+                    <th className="text-right py-2 pr-3">Riders Now</th>
+                    <th className="text-right py-2 pr-3">Fc UTR</th>
+                    <th className="text-right py-2 pr-3">Fc DT</th>
+                    <th className="text-right py-2 pr-3">Need UTR</th>
+                    <th className="text-right py-2 pr-3">Need DT</th>
+                    <th className="text-right py-2 pr-3">Recommended</th>
+                    <th className="text-right py-2 pr-3">Additional</th>
+                    <th className="text-center py-2">Status if unchanged</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {forecastPlan.rows.map(row => row.empty ? (
+                    <tr key={row.city} className="border-b border-gray-800/50">
+                      <td className="py-2 pr-3 font-medium text-white">{row.city}</td>
+                      <td colSpan={10} className="py-2 text-center text-gray-600">No data for {forecastPlan.lastM}</td>
+                    </tr>
+                  ) : (
+                    <tr key={row.city} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                      <td className="py-2 pr-3 font-medium text-white">{row.city}</td>
+                      <td className="text-right py-2 pr-3 text-gray-400">{row.lastOrders.toLocaleString()}</td>
+                      <td className="text-right py-2 pr-3 text-white font-medium">
+                        {Math.round(row.fcOrders).toLocaleString()}
+                        <span className={`text-xs ml-1 ${forecastPlan.growth >= 1 ? 'metric-positive' : 'metric-negative'}`}>
+                          {forecastPlan.growth >= 1 ? '+' : ''}{((forecastPlan.growth - 1) * 100).toFixed(1)}%
+                        </span>
+                      </td>
+                      <td className="text-right py-2 pr-3 text-gray-300">{row.curRiders.toLocaleString()}</td>
+                      <td className={`text-right py-2 pr-3 ${row.fcUtr >= targetUtr ? 'metric-positive' : 'metric-negative'}`}>{row.fcUtr.toFixed(2)}</td>
+                      <td className={`text-right py-2 pr-3 ${row.fcDt <= targetDt ? 'metric-positive' : 'metric-negative'}`}>{row.fcDt.toFixed(1)}</td>
+                      <td className="text-right py-2 pr-3 text-gray-400">{row.needUtr.toLocaleString()}</td>
+                      <td className="text-right py-2 pr-3 text-gray-400">{row.needDt.toLocaleString()}</td>
+                      <td className="text-right py-2 pr-3 text-white font-bold">{row.recommended.toLocaleString()}</td>
+                      <td className={`text-right py-2 pr-3 font-semibold ${row.additional > 0 ? 'metric-negative' : 'metric-positive'}`}>
+                        {row.additional > 0 ? '+' : ''}{row.additional.toLocaleString()}
+                      </td>
+                      <td className="py-2 text-center"><StatusBadge status={row.status} /></td>
+                    </tr>
+                  ))}
+                  {forecastPlan.totals && (
+                    <tr className="border-t border-gray-700 font-bold">
+                      <td className="py-2 pr-3 text-white">TOTAL</td>
+                      <td className="text-right py-2 pr-3 text-gray-400">{Math.round(forecastPlan.totals.lastOrders).toLocaleString()}</td>
+                      <td className="text-right py-2 pr-3 text-white">{Math.round(forecastPlan.totals.fcOrders).toLocaleString()}</td>
+                      <td className="text-right py-2 pr-3 text-white">{forecastPlan.totals.curRiders.toLocaleString()}</td>
+                      <td colSpan={2}></td>
+                      <td className="text-right py-2 pr-3 text-gray-400">{forecastPlan.totals.needUtr.toLocaleString()}</td>
+                      <td className="text-right py-2 pr-3 text-gray-400">{forecastPlan.totals.needDt.toLocaleString()}</td>
+                      <td className="text-right py-2 pr-3 text-white">{forecastPlan.totals.recommended.toLocaleString()}</td>
+                      <td className={`text-right py-2 pr-3 ${forecastPlan.totals.additional > 0 ? 'metric-negative' : 'metric-positive'}`}>
+                        {forecastPlan.totals.additional > 0 ? '+' : ''}{forecastPlan.totals.additional.toLocaleString()}
+                      </td>
+                      <td></td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Assumptions */}
+          <div className="card p-4 text-xs text-gray-500 space-y-1.5">
+            <div className="font-semibold text-gray-400 uppercase tracking-wider text-xs mb-2">How this works</div>
+            <div>· <span className="text-gray-300">Forecast orders</span> = {forecastPlan.lastM} orders × MoM Rate × Seasonal Index (your equation).</div>
+            <div>· <span className="text-gray-300">Riders for UTR</span> = current riders × (current UTR ÷ target UTR) × growth × (days-last ÷ days-fc) — the Rider Plan formula scaled by forecast demand, so it stays consistent with how your UTR is actually reported.</div>
+            <div>· <span className="text-gray-300">Riders for DT</span> = current riders × (current DT ÷ target DT) × growth × (days-last ÷ days-fc) — assumes delivery time scales with rider workload.</div>
+            <div>· <span className="text-gray-300">Recommended</span> = max(Riders for UTR, Riders for DT); the binding constraint wins. <span className="text-gray-300">Status if unchanged</span> shows where each city lands next month if you keep {forecastPlan.lastM} headcount.</div>
+          </div>
+        </div>
+      )}
+      {activeTab === 'forecast' && !forecastPlan && (
+        <div className="card p-5 text-sm text-gray-400">No complete months available to forecast from.</div>
       )}
 
       <p className="text-center text-xs text-gray-700 mt-8">All processing happens in your browser — no data is sent to any server.</p>
