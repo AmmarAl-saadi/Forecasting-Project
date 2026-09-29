@@ -13,6 +13,8 @@ GitHub Pages will publish the site at:
 https://<your-username>.github.io/<repo-name>/
 ```
 
+For this repository: https://ammaral-saadi.github.io/Forecasting-Project/
+
 ## Push / update
 
 ```bash
