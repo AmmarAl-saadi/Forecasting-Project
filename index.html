@@ -1126,7 +1126,7 @@ function App() {
           <div className="card p-5">
             <div className="text-sm font-semibold text-white mb-1">Rider Plan — how many riders you need for these targets</div>
             <div className="text-xs text-gray-500 mb-3">
-              Snapshot: {monthFilter !== 'All' ? monthFilter : 'latest complete month per city'} · Formula: riders = current × (current UTR / target UTR) or current × (current DT / target DT), whichever requires more
+              Snapshot: {monthFilter !== 'All' ? monthFilter : 'latest complete month per city'} · Formula: riders = average of current × (current UTR / target UTR) and current × (current DT / target DT), rounded up
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
