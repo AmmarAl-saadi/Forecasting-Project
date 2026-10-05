@@ -28,7 +28,7 @@ Columns are auto-matched by keyword (`city`, `month`, `utr`, `successful/order`,
 | Trends | Month-over-month line charts for all metrics |
 | Fail Rate | Net fail rate + breakdown (only shown when the file contains fail-rate data) |
 | Rider Plan | Target sliders, status legend, per-city rider plan table |
-| Next Month | MoM × Seasonal Index forecast of orders, riders needed next month |
+| Next Month | YoY-anchored forecast of next month's orders & riders needed (MoM × Seasonal equation available as a toggle) |
 
 ## Supply status logic
 
@@ -46,15 +46,32 @@ Uses the actual `Total Riders` column from the workbook, per city:
 ```
 Riders for UTR = current riders × (current UTR ÷ target UTR)
 Riders for DT  = current riders × (current DT ÷ target DT)
-Recommended    = max(Riders for UTR, Riders for DT)   ← binding constraint wins
+Recommended    = average of the two (rounded up)   ← balances both constraints
 Additional     = Recommended − current riders
 ```
+
+- Averaging (instead of taking the max) tracks your actual hiring plans: against the Irbid Jan–Aug 2026 hiring targets it lands within 54 riders of plan, while `max()` over-recommends ~5×.
 
 - Set **Target UTR** and **Target DT** sliders (or the inputs in the filter bar) and every city recalculates instantly.
 - With no month selected, each city snapshots its **latest complete month**.
 - **Partial months** (total orders < 30% of the previous month, e.g. an in-progress month) are automatically excluded from totals and trends. Select the month explicitly in the Month filter to inspect it.
 
 ## Next-month forecast (Next Month tab)
+
+Two models, switchable from the Forecast Basis card:
+
+**YoY growth (default — backtest winner):**
+
+```
+Next Month Orders = Same Month Last Year × median(YoY growth per city)
+```
+
+- **Anchor month** — the same calendar month one year before the forecast month (forecast Oct 2026 → Oct 2025 actuals).
+- **YoY growth** — per city, the median of that city's year-over-year monthly ratios (robust to spikes; partial months excluded). The auto value shown is the total-level median of the same ratios; typing a value overrides all cities at once.
+- Backtested one month ahead over 2026-01…08 with no peeking: **MAPE 9.7%** on totals vs **12.9%** for MoM × Seasonal (Irbid: 7.8% vs 12.8%).
+- Below one year of history it falls back to the original equation (a banner says so).
+
+**MoM × Seasonal (the original equation):**
 
 ```
 Next Month Orders = Last Complete Month × MoM Rate × Seasonal Index
@@ -67,10 +84,10 @@ Next Month Orders = Last Complete Month × MoM Rate × Seasonal Index
 Riders needed next month scales the Rider Plan formula by forecast growth (this keeps it consistent with how UTR is reported in your file — it does **not** assume UTR = orders ÷ (riders × days)):
 
 ```
-growth            = MoM Rate × Seasonal Index
+growth            = forecast orders ÷ last month orders
 Riders for UTR    = current riders × (current UTR ÷ target UTR) × growth × (days_last ÷ days_fc)
 Riders for DT     = current riders × (current DT  ÷ target DT ) × growth × (days_last ÷ days_fc)
-Recommended       = max(Riders for UTR, Riders for DT)
+Recommended       = average of the two (rounded up)
 ```
 
 The *Status if unchanged* column shows where each city lands next month at the current headcount.
