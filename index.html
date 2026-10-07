@@ -660,10 +660,13 @@ function App() {
 
   // ─── Next-month forecast ──────────────────────────────────────────────────
   // Model 'yoy' (default, backtest winner): Orders(fc) = Orders(fc − 12) × median(YoY growth).
-  //   Backtested 2026-01..08 with no peeking: MAPE 9.7% vs 12.9% for the original
-  //   equation (totals); 7.8% vs 12.8% for Irbid. Falls back to the original
+  //   Backtested 2026-01..08 with no peeking: MAPE 9.8% vs 13.1% for the original
+  //   equation (totals); 9.5% vs 13.0% for Irbid. Falls back to the original
   //   equation when history < 1 year (anchor month or ≥2 YoY ratios missing).
-  // Model 'momsi' (user's equation): Orders(fc) = Last Month × MoM Rate × Seasonal Index.
+  // Model 'momsi' (user's equation): Orders(fc) = Last Month × MoM Rate × Seasonal Index —
+  //   each city uses its OWN ratios: MoM = that city's mean month-over-month ratio, SI = that
+  //   city's forecast-month average ÷ that city's average month. Totals-based MoM/SI are the
+  //   fallback when a city lacks the history; a typed value overrides all cities.
   // Riders scale from last month's headcount by growth = forecast ÷ last-month orders:
   //   riders_for_utr = current × (current UTR / target UTR) × growth × (days_last / days_fc)
   //   riders_for_dt  = current × (current DT  / target DT ) × growth × (days_last / days_fc)
@@ -723,6 +726,30 @@ function App() {
       if (r.orders != null && complete.includes(r.month)) cityOrders[r.city][r.month] = r.orders;
     }
 
+    // Per-city MoM × SI params — each city uses its OWN mean MoM ratio and seasonal index
+    // (totals-based defaults are the fallback when a city lacks history)
+    const perCityMom = {}, perCitySi = {};
+    for (const city of dataset.cities) {
+      const cm = cityOrders[city];
+      const momRatiosC = [];
+      for (let i = 1; i < complete.length; i++) {
+        if (nextMonthStr(complete[i - 1]) !== complete[i]) continue; // skip gaps
+        const p = cm[complete[i - 1]], c = cm[complete[i]];
+        if (p != null && c != null && p > 0 && c > 0) momRatiosC.push(c / p);
+      }
+      if (momRatiosC.length) perCityMom[city] = meanOf(momRatiosC);
+      const vals = [], fVals = [];
+      for (const m of complete) {
+        const v = cm[m];
+        if (v == null || v <= 0) continue;
+        vals.push(v);
+        if (m.slice(5) === fcCM) fVals.push(v);
+      }
+      if (vals.length && fVals.length) perCitySi[city] = meanOf(fVals) / meanOf(vals);
+    }
+    const momTyped = momEdit !== '' && isFinite(parseFloat(momEdit)) && parseFloat(momEdit) > 0;
+    const siTyped = siEdit !== '' && isFinite(parseFloat(siEdit)) && parseFloat(siEdit) > 0;
+
     const cities = cityFilter === 'All' ? dataset.cities : [cityFilter];
     const rows = [];
     for (const city of cities) {
@@ -744,7 +771,12 @@ function App() {
         const g = yoyOverride ? effYoy : gAuto;
         if (g != null && cm[anchorM] != null) { fcOrders = cm[anchorM] * g; rowModel = 'yoy'; }
       }
-      if (fcOrders == null) { fcOrders = snap.orders * momsiGrowth; rowModel = 'momsi'; }
+      if (fcOrders == null) {
+        const momC = momTyped ? effMom : (perCityMom[city] != null ? perCityMom[city] : momDefault);
+        const siC = siTyped ? effSi : (perCitySi[city] != null ? perCitySi[city] : siDefault);
+        fcOrders = snap.orders * momC * siC;
+        rowModel = 'momsi';
+      }
       const growth = fcOrders / snap.orders;
       const needUtrRaw = targetUtr > 0 ? snap.riders * (snap.utr / targetUtr) * growth * dayFactor : 0;
       const needDtRaw = targetDt > 0 ? snap.riders * (snap.dt / targetDt) * growth * dayFactor : 0;
@@ -1267,7 +1299,7 @@ function App() {
                       onChange={e => setMomEdit(e.target.value)} />
                     {momEdit !== '' && <button className="text-xs text-[#FF5900] hover:underline" onClick={() => setMomEdit('')}>reset</button>}
                   </div>
-                  <div className="text-xs text-gray-600 mt-0.5">{momEdit !== '' ? 'override' : `auto: mean of ${forecastPlan.ratiosN} ratios`}</div>
+                  <div className="text-xs text-gray-600 mt-0.5">{momEdit !== '' ? 'override (all cities)' : 'auto: per-city mean of its MoM ratios (totals as fallback)'}</div>
                 </div>
                 <div className="text-xl text-gray-600 pb-1">×</div>
                 <div>
@@ -1279,15 +1311,15 @@ function App() {
                       onChange={e => setSiEdit(e.target.value)} />
                     {siEdit !== '' && <button className="text-xs text-[#FF5900] hover:underline" onClick={() => setSiEdit('')}>reset</button>}
                   </div>
-                  <div className="text-xs text-gray-600 mt-0.5">{siEdit !== '' ? 'override' : 'auto: month avg ÷ avg month'}</div>
+                  <div className="text-xs text-gray-600 mt-0.5">{siEdit !== '' ? 'override (all cities)' : 'auto: per-city month avg ÷ avg month'}</div>
                 </div>
                 <div className="text-xl text-gray-600 pb-1">=</div>
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">Forecast growth</label>
+                  <label className="text-xs text-gray-400 block mb-1">Forecast growth (total)</label>
                   <div className="text-[#411517] font-bold" style={{ color: '#FF5900' }}>
-                    ×{forecastPlan.momsiGrowth.toFixed(4)} <span className="text-sm font-medium">({forecastPlan.momsiGrowth >= 1 ? '+' : ''}{((forecastPlan.momsiGrowth - 1) * 100).toFixed(1)}%)</span>
+                    ×{forecastPlan.totGrowth.toFixed(4)} <span className="text-sm font-medium">({forecastPlan.totGrowth >= 1 ? '+' : ''}{((forecastPlan.totGrowth - 1) * 100).toFixed(1)}%)</span>
                   </div>
-                  <div className="text-xs text-gray-600">day factor ×{forecastPlan.dayFactor.toFixed(3)}</div>
+                  <div className="text-xs text-gray-600">per-city ratios · day factor ×{forecastPlan.dayFactor.toFixed(3)}</div>
                 </div>
                 <div>
                   <label className="text-xs text-gray-400 block mb-1">Forecast month</label>
@@ -1305,7 +1337,7 @@ function App() {
             <p className="text-xs text-gray-600 mt-3">
               {forecastPlan.model === 'yoy'
                 ? `Forecast = anchor month × each city's YoY growth (median ratio — robust to spikes). Type a value to override for all cities (partial months excluded${partialMonths.length ? `: ${partialMonths.join(', ')}` : ''}).`
-                : `Auto defaults are computed from your data (partial months excluded${partialMonths.length ? `: ${partialMonths.join(', ')}` : ''}). Type a value to override — planning a promo? Set your own MoM Rate.`}
+                : `Each city uses its own MoM Rate and Seasonal Index computed from its history (partial months excluded${partialMonths.length ? `: ${partialMonths.join(', ')}` : ''}). Type a value to override for all cities — planning a promo? Set your own MoM Rate.`}
             </p>
           </div>
 
@@ -1328,7 +1360,7 @@ function App() {
           <div className="card p-5">
             <div className="text-sm font-semibold text-[#411517] mb-1">Riders Needed Next Month — by city</div>
             <div className="text-xs text-gray-500 mb-3">
-              Base: {forecastPlan.lastM} actuals · {forecastPlan.model === 'yoy' ? `YoY anchor ${forecastPlan.anchorM}` : `MoM × SI ×${forecastPlan.momsiGrowth.toFixed(4)}`} · Forecast month {forecastPlan.fcM} ({forecastPlan.daysFc} days)
+              Base: {forecastPlan.lastM} actuals · {forecastPlan.model === 'yoy' ? `YoY anchor ${forecastPlan.anchorM}` : 'MoM × SI (per city)'} · Forecast month {forecastPlan.fcM} ({forecastPlan.daysFc} days)
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -1400,12 +1432,12 @@ function App() {
           <div className="card p-4 text-xs text-gray-500 space-y-1.5">
             <div className="font-semibold text-gray-400 uppercase tracking-wider text-xs mb-2">How this works</div>
             <div>· <span className="text-gray-300">Forecast orders</span> = {forecastPlan.model === 'yoy'
-              ? <>{monthLabel(forecastPlan.anchorM)} orders × YoY growth (each city's median year-over-year ratio) — backtested at 7.8% MAPE for Irbid vs 12.8% for the original equation; falls back to MoM × Seasonal below one year of history.</>
-              : <>{forecastPlan.lastM} orders × MoM Rate × Seasonal Index (your equation).</>}</div>
+              ? <>{monthLabel(forecastPlan.anchorM)} orders × YoY growth (each city's median year-over-year ratio) — backtested at 9.5% MAPE for Irbid vs 13.0% for the original equation; falls back to MoM × Seasonal below one year of history.</>
+              : <>{forecastPlan.lastM} orders × MoM Rate × Seasonal Index (each city's own ratios — its mean month-over-month ratio and its own seasonal average; totals-based defaults when a city lacks history).</>}</div>
             <div>· <span className="text-gray-300">Riders for UTR</span> = current riders × (current UTR ÷ target UTR) × growth × (days-last ÷ days-fc) — the Rider Plan formula scaled by forecast demand, so it stays consistent with how your UTR is actually reported.</div>
             <div>· <span className="text-gray-300">Riders for DT</span> = current riders × (current DT ÷ target DT) × growth × (days-last ÷ days-fc) — assumes delivery time scales with rider workload.</div>
             <div>· <span className="text-gray-300">Recommended</span> = average of (Riders for UTR) and (Riders for DT) — balances both constraints instead of always covering the worst one. <span className="text-gray-300">Status if unchanged</span> shows where each city lands next month if you keep {forecastPlan.lastM} headcount.</div>
-            <div>· <span className="text-gray-300">Backtest</span> (2026-01…08, one month ahead, no peeking): YoY model MAPE 9.7% vs 12.9% for MoM × Seasonal on totals; 7.8% vs 12.8% for Irbid.</div>
+            <div>· <span className="text-gray-300">Backtest</span> (2026-01…08, one month ahead, no peeking): YoY model MAPE 9.8% vs 13.1% for MoM × Seasonal on totals; 9.5% vs 13.0% for Irbid.</div>
           </div>
         </div>
       )}

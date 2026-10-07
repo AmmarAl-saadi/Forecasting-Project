@@ -68,17 +68,17 @@ Next Month Orders = Same Month Last Year × median(YoY growth per city)
 
 - **Anchor month** — the same calendar month one year before the forecast month (forecast Oct 2026 → Oct 2025 actuals).
 - **YoY growth** — per city, the median of that city's year-over-year monthly ratios (robust to spikes; partial months excluded). The auto value shown is the total-level median of the same ratios; typing a value overrides all cities at once.
-- Backtested one month ahead over 2026-01…08 with no peeking: **MAPE 9.7%** on totals vs **12.9%** for MoM × Seasonal (Irbid: 7.8% vs 12.8%).
+- Backtested one month ahead over 2026-01…08 with no peeking: **MAPE 9.8%** on totals vs **13.1%** for MoM × Seasonal (Irbid: 9.5% vs 13.0%).
 - Below one year of history it falls back to the original equation — the equation header and inputs switch automatically, with a banner explaining why.
 
 **MoM × Seasonal (the original equation):**
 
 ```
-Next Month Orders = Last Complete Month × MoM Rate × Seasonal Index
+Next Month Orders = Last Complete Month × MoM Rate × Seasonal Index (each city's own ratios)
 ```
 
-- **MoM Rate** — mean of the historical month-over-month ratios (aggregate orders, partial months excluded). Editable; reset returns to auto.
-- **Seasonal Index** — historical average of the forecast calendar month ÷ overall monthly average. Editable.
+- **MoM Rate** — per city, the mean of that city's historical month-over-month ratios (partial months excluded). Typing a value overrides all cities; reset returns to per-city auto.
+- **Seasonal Index** — per city, that city's historical average of the forecast calendar month ÷ its own monthly average (totals-based default if a city lacks history). Typing a value overrides all cities.
 - **Forecast month** — the month after the latest data month (e.g. data ends 2026-09 → October 2026), with its real day count.
 
 Riders needed next month scales the Rider Plan formula by forecast growth (this keeps it consistent with how UTR is reported in your file — it does **not** assume UTR = orders ÷ (riders × days)):
