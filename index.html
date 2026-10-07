@@ -1198,7 +1198,7 @@ function App() {
           <div className="card p-4">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                {fcModel === 'yoy'
+                {forecastPlan.model === 'yoy'
                   ? 'Forecast Basis — Next Month Orders = Same Month Last Year × YoY Growth'
                   : 'Forecast Basis — Next Month Orders = Last Month × MoM Rate × Seasonal Index'}
               </div>
@@ -1210,7 +1210,7 @@ function App() {
               </div>
             </div>
 
-            {fcModel === 'yoy' ? (
+            {forecastPlan.model === 'yoy' ? (
               <div className="flex flex-wrap gap-x-8 gap-y-4 items-end">
                 <div>
                   <label className="text-xs text-gray-400 block mb-1">Anchor (same month last year)</label>
@@ -1298,7 +1298,7 @@ function App() {
               </p>
             )}
             <p className="text-xs text-gray-600 mt-3">
-              {fcModel === 'yoy'
+              {forecastPlan.model === 'yoy'
                 ? `Forecast = anchor month × each city's YoY growth (median ratio — robust to spikes). Type a value to override for all cities (partial months excluded${partialMonths.length ? `: ${partialMonths.join(', ')}` : ''}).`
                 : `Auto defaults are computed from your data (partial months excluded${partialMonths.length ? `: ${partialMonths.join(', ')}` : ''}). Type a value to override — planning a promo? Set your own MoM Rate.`}
             </p>

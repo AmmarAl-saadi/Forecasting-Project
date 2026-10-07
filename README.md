@@ -69,7 +69,7 @@ Next Month Orders = Same Month Last Year × median(YoY growth per city)
 - **Anchor month** — the same calendar month one year before the forecast month (forecast Oct 2026 → Oct 2025 actuals).
 - **YoY growth** — per city, the median of that city's year-over-year monthly ratios (robust to spikes; partial months excluded). The auto value shown is the total-level median of the same ratios; typing a value overrides all cities at once.
 - Backtested one month ahead over 2026-01…08 with no peeking: **MAPE 9.7%** on totals vs **12.9%** for MoM × Seasonal (Irbid: 7.8% vs 12.8%).
-- Below one year of history it falls back to the original equation (a banner says so).
+- Below one year of history it falls back to the original equation — the equation header and inputs switch automatically, with a banner explaining why.
 
 **MoM × Seasonal (the original equation):**
 
