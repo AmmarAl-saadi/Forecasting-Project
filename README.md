@@ -4,7 +4,7 @@ Single-page dashboard for Jordan Delivery Operations metrics (Orders, UTR, Deliv
 
 ## Quick start
 
-Open `index.html` directly in any modern browser. The dashboard loads with embedded data (Ajloun, Irbid, Jerash, Mafraq — Jan 2025 to Sep 2026) immediately.
+Open `index.html` directly in any modern browser. The dashboard loads with embedded data (Ajloun, Irbid, Jerash, Mafraq — Jan 2025 to Oct 2026; Oct is in progress and auto-flagged as partial) immediately.
 
 To load new data, click the upload zone and select your `.xlsx` workbook. All processing is client-side.
 
