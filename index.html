@@ -453,19 +453,26 @@ function SimpleLineChart({ data, xKey, yKeys, height = 220, targetLine = null, v
   const innerW = chartW - padding.left - padding.right;
   const innerH = chartH - padding.top - padding.bottom;
   const keys = Array.isArray(yKeys) ? yKeys : [yKeys];
-  const allVals = keys.flatMap(k => data.map(d => d[k.key] || 0));
+  const allVals = keys.flatMap(k => data.map(d => d[k.key]).filter(v => v != null && isFinite(v)));
   const maxVal = Math.max(1, ...allVals, targetLine || 0) * 1.1;
   const minVal = Math.min(0, ...allVals);
   const range = maxVal - minVal || 1;
 
-  const linesData = keys.map(k => ({
-    ...k,
-    points: data.map((d, i) => {
+  const linesData = keys.map(k => {
+    const points = data.map((d, i) => {
       const x = padding.left + (data.length > 1 ? (i / (data.length - 1)) * innerW : innerW / 2);
-      const y = padding.top + innerH - ((d[k.key] - minVal) / range) * innerH;
-      return { x, y, val: d[k.key], label: d[xKey] };
-    }),
-  }));
+      const v = d[k.key];
+      const valid = v != null && isFinite(v);
+      return { x, y: valid ? padding.top + innerH - ((v - minVal) / range) * innerH : null, val: valid ? v : null, label: d[xKey] };
+    });
+    let pathD = '', open = false; // null/missing values break the line instead of crashing it to zero
+    for (const p of points) {
+      if (p.y == null) { open = false; continue; }
+      pathD += (open ? ' L' : (pathD ? ' M' : 'M')) + ` ${p.x} ${p.y}`;
+      open = true;
+    }
+    return { ...k, points, pathD };
+  });
 
   return (
     <div style={{ background: '#FFFFFF', borderRadius: 10, border: '1px solid #EDE3D6', padding: '8px 6px 4px' }}>
@@ -487,11 +494,11 @@ function SimpleLineChart({ data, xKey, yKeys, height = 220, targetLine = null, v
       )}
       {linesData.map((line, li) => (
         <g key={li}>
-          <path d={line.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')}
+          <path d={line.pathD}
             fill="none" stroke={line.color} strokeWidth="2.5" />
-          {line.points.map((p, i) => (
+          {line.points.map((p, i) => p.y != null ? (
             <circle key={i} cx={p.x} cy={p.y} r="3.5" fill={line.color} />
-          ))}
+          ) : null)}
         </g>
       ))}
       {linesData[0].points.map((p, i) => (
@@ -884,6 +891,32 @@ function App() {
       }));
   }, [filteredRecords, dataset.months]);
 
+  // Trends: reshape month data to calendar-month rows with one value per year,
+  // so every chart draws two lines — 2025 (brown #411517) vs 2026 (orange #FF5900)
+  const yoyChartData = useMemo(() => {
+    const years = [...new Set(monthChartData.map(d => d.month.slice(0, 4)))].sort();
+    if (!years.length) return { rows: [], years: [], yearColor: () => '#FF5900' };
+    const yearColor = y => (y === '2026' ? '#FF5900' : y === '2025' ? '#411517' : (y === years[years.length - 1] ? '#FF5900' : '#411517'));
+    const byCM = {};
+    for (const d of monthChartData) {
+      const cm = +d.month.slice(5);
+      (byCM[cm] = byCM[cm] || {})[d.month.slice(0, 4)] = d;
+    }
+    const rows = Object.keys(byCM).map(Number).sort((a, b) => a - b).map(cm => {
+      const row = { month: (MONTH_NAMES[cm - 1] || String(cm)).slice(0, 3) };
+      for (const y of years) {
+        const d = byCM[cm][y];
+        if (!d) continue;
+        row['Orders' + y] = d.Orders;
+        row['UTR' + y] = d.UTR;
+        row['DT' + y] = d.DT;
+        row['FailRate' + y] = d.FailRate;
+      }
+      return row;
+    });
+    return { rows, years, yearColor };
+  }, [monthChartData]);
+
   const citySupplyTable = useMemo(() => {
     return cityChartData.map(d => ({
       ...d,
@@ -1084,19 +1117,25 @@ function App() {
       {/* ── TRENDS ── */}
       {activeTab === 'trends' && (
         <div className="space-y-4">
-          {monthChartData.length > 0 ? (
+          {yoyChartData.rows.length > 0 ? (
             <>
               <div className="card p-5">
-                <div className="text-sm font-semibold text-[#411517] mb-3">Orders Over Time</div>
-                <SimpleLineChart data={monthChartData} xKey="month" yKeys={[{ key: 'Orders', color: CHART_COLORS.orders, label: 'Orders' }]} height={230} />
+                <div className="text-sm font-semibold text-[#411517] mb-3">Orders Over Time — {yoyChartData.years.join(' vs ')}</div>
+                <SimpleLineChart data={yoyChartData.rows} xKey="month"
+                  yKeys={yoyChartData.years.map(y => ({ key: 'Orders' + y, color: yoyChartData.yearColor(y), label: y }))}
+                  height={230} />
               </div>
               <div className="card p-5">
-                <div className="text-sm font-semibold text-[#411517] mb-3">UTR Over Time</div>
-                <SimpleLineChart data={monthChartData} xKey="month" yKeys={[{ key: 'UTR', color: CHART_COLORS.utr, label: 'UTR' }]} height={230} targetLine={targetUtr} />
+                <div className="text-sm font-semibold text-[#411517] mb-3">UTR Over Time — {yoyChartData.years.join(' vs ')}</div>
+                <SimpleLineChart data={yoyChartData.rows} xKey="month"
+                  yKeys={yoyChartData.years.map(y => ({ key: 'UTR' + y, color: yoyChartData.yearColor(y), label: y }))}
+                  height={230} targetLine={targetUtr} />
               </div>
               <div className="card p-5">
-                <div className="text-sm font-semibold text-[#411517] mb-3">Delivery Time Over Time</div>
-                <SimpleLineChart data={monthChartData} xKey="month" yKeys={[{ key: 'DT', color: CHART_COLORS.dt, label: 'DT (min)' }]} height={230} targetLine={targetDt} valueSuffix=" min" />
+                <div className="text-sm font-semibold text-[#411517] mb-3">Delivery Time Over Time — {yoyChartData.years.join(' vs ')}</div>
+                <SimpleLineChart data={yoyChartData.rows} xKey="month"
+                  yKeys={yoyChartData.years.map(y => ({ key: 'DT' + y, color: yoyChartData.yearColor(y), label: y }))}
+                  height={230} targetLine={targetDt} valueSuffix=" min" />
               </div>
             </>
           ) : (
