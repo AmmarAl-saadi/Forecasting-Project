@@ -74,11 +74,15 @@ Next Month Orders = Same Month Last Year × median(YoY growth per city)
 **MoM × Seasonal (the original equation):**
 
 ```
-Next Month Orders = Last Complete Month × MoM Rate × Seasonal Index (each city's own ratios)
+Next Month Orders = Last Complete Month × MoM Rate × Seasonal Index (per city; MoM basis: last 6 months by default, or all history)
 ```
 
-- **MoM Rate** — per city, the mean of that city's historical month-over-month ratios (partial months excluded). Typing a value overrides all cities; reset returns to per-city auto.
-- **Seasonal Index** — per city, that city's historical average of the forecast calendar month ÷ its own monthly average (totals-based default if a city lacks history). Typing a value overrides all cities.
+- **MoM Rate** — a **MoM basis** toggle chooses the window:
+  - **Last 6 months** (default) — per city, the mean of its **last 6** month-over-month ratios. Follows recent momentum, so growing cities (new vendor launches) aren't dragged down by their old baseline. Falls back to all history, then totals, when a city lacks 6 months.
+  - **All history** — per city, the mean of all its month-over-month ratios (partial months excluded).
+  - Typing a value in the MoM Rate box overrides all cities; reset returns to auto.
+- **Seasonal Index** — in *Last 6 months* mode a six-month window contains no copy of the forecast month, so it uses the **market** seasonal index (forecast-month average ÷ average month). *All history* mode uses each city's own index (totals-based default if a city lacks history). Typing a value overrides all cities.
+- **Override %** (forecast table) — type a growth % on any city's row to pin **that city only** to exactly that growth vs last month (e.g. `10` → +10%); applies under either model, and the ✕ clears it back to auto. Placeholders in the box show the auto growth it would otherwise use.
 - **Forecast month** — the month after the latest data month (e.g. data ends 2026-09 → October 2026), with its real day count.
 
 Riders needed next month scales the Rider Plan formula by forecast growth (this keeps it consistent with how UTR is reported in your file — it does **not** assume UTR = orders ÷ (riders × days)):
