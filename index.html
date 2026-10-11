@@ -1154,9 +1154,11 @@ function App() {
               : <div className="text-gray-600 text-sm py-6 text-center">No fail rate data.</div>}
           </div>
           <div className="card p-5">
-            <div className="text-sm font-semibold text-[#411517] mb-3">Net Fail Rate Over Time</div>
-            {monthChartData.length > 0
-              ? <SimpleLineChart data={monthChartData} xKey="month" yKeys={[{ key: 'FailRate', color: CHART_COLORS.fail, label: 'Fail Rate %' }]} height={220} valueSuffix="%" />
+            <div className="text-sm font-semibold text-[#411517] mb-3">Net Fail Rate Over Time{yoyChartData.years.length > 1 ? ` — ${yoyChartData.years.join(' vs ')}` : ''}</div>
+            {yoyChartData.rows.length > 0
+              ? <SimpleLineChart data={yoyChartData.rows} xKey="month"
+                  yKeys={yoyChartData.years.map(y => ({ key: 'FailRate' + y, color: yoyChartData.yearColor(y), label: y }))}
+                  height={220} valueSuffix="%" />
               : <div className="text-gray-600 text-sm py-6 text-center">No trend data.</div>}
           </div>
 
