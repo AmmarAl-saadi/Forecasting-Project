@@ -935,8 +935,13 @@ function App() {
     const first = shared[0], last = shared[shared.length - 1];
     const prevY = years[years.length - 2], curY = years[years.length - 1];
     const delta = totals[prevY] > 0 ? totals[curY] / totals[prevY] - 1 : null;
+    const monthly = shared.map(cm => {
+      const get = y => { const d = monthChartData.find(d => d.month.slice(0, 4) === y && +d.month.slice(5) === cm); return d && d.Orders != null ? d.Orders : null; };
+      const prev = get(prevY), cur = get(curY);
+      return { cm, label: MONTH_NAMES[cm - 1] || cm, prev, cur, growth: prev != null && prev > 0 && cur != null ? cur / prev - 1 : null };
+    });
     return {
-      years, totals, yearColor: yoyChartData.yearColor,
+      years, totals, yearColor: yoyChartData.yearColor, monthly,
       rangeLabel: (MONTH_NAMES[first - 1] || first) + '–' + (MONTH_NAMES[last - 1] || last),
       curY, prevY, delta,
     };
@@ -1163,6 +1168,36 @@ function App() {
                         </div>
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
+              {yoyCompleted && yoyCompleted.monthly.length > 0 && (
+                <div className="card p-5">
+                  <div className="text-sm font-semibold text-[#411517] mb-1">Monthly Growth — {yoyCompleted.curY} vs {yoyCompleted.prevY}</div>
+                  <div className="text-xs text-gray-500 mb-3">Completed orders per month, year over year (e.g. September {yoyCompleted.prevY} vs {yoyCompleted.curY}); partial months excluded</div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-xs text-gray-500 uppercase border-b border-gray-800">
+                          <th className="text-left py-2 pr-3">Month</th>
+                          <th className="text-right py-2 pr-3" style={{ color: yoyCompleted.yearColor(yoyCompleted.prevY) }}>{yoyCompleted.prevY}</th>
+                          <th className="text-right py-2 pr-3" style={{ color: yoyCompleted.yearColor(yoyCompleted.curY) }}>{yoyCompleted.curY}</th>
+                          <th className="text-right py-2">Growth</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {yoyCompleted.monthly.map(row => (
+                          <tr key={row.cm} className="border-b border-gray-800/50">
+                            <td className="py-1.5 pr-3 font-medium text-[#411517]">{row.label}</td>
+                            <td className="text-right py-1.5 pr-3" style={{ color: yoyCompleted.yearColor(yoyCompleted.prevY) }}>{row.prev != null ? row.prev.toLocaleString() : '—'}</td>
+                            <td className="text-right py-1.5 pr-3 font-medium" style={{ color: yoyCompleted.yearColor(yoyCompleted.curY) }}>{row.cur != null ? row.cur.toLocaleString() : '—'}</td>
+                            <td className={`text-right py-1.5 font-semibold ${row.growth == null ? '' : row.growth >= 0 ? 'metric-positive' : 'metric-negative'}`}>
+                              {row.growth == null ? '—' : (row.growth >= 0 ? '+' : '') + (row.growth * 100).toFixed(1) + '%'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               )}
