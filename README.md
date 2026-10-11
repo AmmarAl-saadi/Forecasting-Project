@@ -25,7 +25,7 @@ Columns are auto-matched by keyword (`city`, `month`, `utr`, `successful/order`,
 |-----|---------------|
 | Overview | KPI cards (orders, UTR, DT, recommended riders), supply status, orders by city |
 | By City | Full metrics table + UTR/DT bar charts |
-| Trends | **Completed Orders YoY** summary (same calendar months summed per year, e.g. Jan–Sep 2026 vs Jan–Sep 2025) + a **Monthly Growth** table (2025 vs 2026 orders and YoY growth % per month) + year-over-year line charts — every metric drawn as two lines per calendar month: **2025 (brown `#411517`) vs 2026 (orange `#FF5900`)** |
+| Trends | **Completed Orders YoY** card — same-calendar-months totals per year (e.g. Jan–Sep 2026 vs Jan–Sep 2025) with per-month **growth % chips** (Jan +21.0% …; click a chip to compare that month YoY, or pick it in the Month filter and the card zooms to that month) + year-over-year line charts — every metric drawn as two lines per calendar month: **2025 (brown `#411517`) vs 2026 (orange `#FF5900`)** |
 | Fail Rate | Net fail rate + breakdown (only shown when the file contains fail-rate data) |
 | Rider Plan | Target sliders, status legend, per-city rider plan table |
 | Next Month | YoY-anchored forecast of next month's orders & riders needed (MoM × Seasonal equation available as a toggle) |

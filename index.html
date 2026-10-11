@@ -891,6 +891,18 @@ function App() {
       }));
   }, [filteredRecords, dataset.months]);
 
+  // Same month aggregation but ignoring the Month filter (city filter kept) — the YoY
+  // panel must survive month selection so picking a month shows that month vs last year
+  const monthChartDataAll = useMemo(() => {
+    const recs = records.filter(r => (cityFilter === 'All' || r.city === cityFilter) && !partialMonths.includes(r.month));
+    const agg = {};
+    for (const r of recs) {
+      if (!agg[r.month]) agg[r.month] = 0;
+      if (r.orders != null) agg[r.month] += r.orders;
+    }
+    return dataset.months.filter(m => agg[m] !== undefined).map(m => ({ month: m, Orders: Math.round(agg[m]) }));
+  }, [records, cityFilter, partialMonths, dataset.months]);
+
   // Trends: reshape month data to calendar-month rows with one value per year,
   // so every chart draws two lines — 2025 (brown #411517) vs 2026 (orange #FF5900)
   const yoyChartData = useMemo(() => {
@@ -917,35 +929,43 @@ function App() {
     return { rows, years, yearColor };
   }, [monthChartData]);
 
-  // Completed-orders YoY summary: the same calendar months summed for every year
-  // (e.g. Jan–Sep 2026 vs Jan–Sep 2025 — partial months excluded)
+  // Completed-orders YoY summary: same calendar months summed per year + per-month growth
+  // chips. Uses monthChartDataAll so it survives the Month filter, and highlights/zooms
+  // the selected month (e.g. pick 2026-09 → September 2025 vs 2026).
   const yoyCompleted = useMemo(() => {
-    const years = yoyChartData.years;
+    const years = [...new Set(monthChartDataAll.map(d => d.month.slice(0, 4)))].sort();
     if (years.length < 2) return null;
-    const cmSets = years.map(y => new Set(monthChartData.filter(d => d.month.slice(0, 4) === y).map(d => +d.month.slice(5))));
+    const cmSets = years.map(y => new Set(monthChartDataAll.filter(d => d.month.slice(0, 4) === y).map(d => +d.month.slice(5))));
     const shared = [...cmSets[0]].filter(cm => cmSets.every(s => s.has(cm))).sort((a, b) => a - b);
     if (!shared.length) return null;
+    const find = (y, cm) => monthChartDataAll.find(d => d.month.slice(0, 4) === y && +d.month.slice(5) === cm);
     const totals = {};
-    for (const y of years) {
-      totals[y] = shared.reduce((s, cm) => {
-        const d = monthChartData.find(d => d.month.slice(0, 4) === y && +d.month.slice(5) === cm);
-        return s + (d && d.Orders != null ? d.Orders : 0);
-      }, 0);
-    }
+    for (const y of years) totals[y] = shared.reduce((s, cm) => { const d = find(y, cm); return s + (d && d.Orders != null ? d.Orders : 0); }, 0);
     const first = shared[0], last = shared[shared.length - 1];
     const prevY = years[years.length - 2], curY = years[years.length - 1];
     const delta = totals[prevY] > 0 ? totals[curY] / totals[prevY] - 1 : null;
+    const selCm = monthFilter !== 'All' ? +monthFilter.slice(5) : null;
+    const selYear = monthFilter !== 'All' ? monthFilter.slice(0, 4) : null;
     const monthly = shared.map(cm => {
-      const get = y => { const d = monthChartData.find(d => d.month.slice(0, 4) === y && +d.month.slice(5) === cm); return d && d.Orders != null ? d.Orders : null; };
-      const prev = get(prevY), cur = get(curY);
-      return { cm, label: MONTH_NAMES[cm - 1] || cm, prev, cur, growth: prev != null && prev > 0 && cur != null ? cur / prev - 1 : null };
+      const prevD = find(prevY, cm), curD = find(curY, cm);
+      const prev = prevD && prevD.Orders != null ? prevD.Orders : null;
+      const cur = curD && curD.Orders != null ? curD.Orders : null;
+      return {
+        cm,
+        label: (MONTH_NAMES[cm - 1] || cm).slice(0, 3),
+        fullLabel: MONTH_NAMES[cm - 1] || cm,
+        prev, cur,
+        growth: prev != null && prev > 0 && cur != null ? cur / prev - 1 : null,
+        active: selCm === cm && (selYear === curY || selYear === prevY),
+      };
     });
+    const selected = monthly.find(m => m.active) || null;
     return {
-      years, totals, yearColor: yoyChartData.yearColor, monthly,
+      years, totals, yearColor: yoyChartData.yearColor, monthly, selected, curY, prevY,
       rangeLabel: (MONTH_NAMES[first - 1] || first) + '–' + (MONTH_NAMES[last - 1] || last),
-      curY, prevY, delta,
+      delta,
     };
-  }, [yoyChartData, monthChartData]);
+  }, [monthChartDataAll, monthFilter, yoyChartData]);
 
   const citySupplyTable = useMemo(() => {
     return cityChartData.map(d => ({
@@ -1151,53 +1171,57 @@ function App() {
             <>
               {yoyCompleted && (
                 <div className="card p-5">
-                  <div className="text-sm font-semibold text-[#411517] mb-1">Completed Orders YoY — {yoyCompleted.rangeLabel} (same months)</div>
-                  <div className="text-xs text-gray-500 mb-3">Successful orders summed over the calendar months present in both years (partial months excluded)</div>
+                  <div className="text-sm font-semibold text-[#411517] mb-1">
+                    {yoyCompleted.selected
+                      ? `Completed Orders YoY — ${yoyCompleted.selected.fullLabel} ${yoyCompleted.prevY} vs ${yoyCompleted.curY}`
+                      : `Completed Orders YoY — ${yoyCompleted.rangeLabel} (same months)`}
+                  </div>
+                  <div className="text-xs text-gray-500 mb-3">
+                    {yoyCompleted.selected
+                      ? 'Showing the month chosen in the Month filter vs the same month last year (partial months excluded)'
+                      : 'Successful orders summed over the calendar months present in both years (partial months excluded)'}
+                  </div>
                   <div className="flex flex-wrap gap-x-10 gap-y-3 items-end">
-                    {yoyCompleted.years.map(y => (
-                      <div key={y}>
-                        <div className="text-xs text-gray-400 mb-0.5">{y}</div>
-                        <div className="text-2xl font-bold" style={{ color: yoyCompleted.yearColor(y) }}>{yoyCompleted.totals[y].toLocaleString()}</div>
+                    {(yoyCompleted.selected
+                      ? [{ y: yoyCompleted.prevY, v: yoyCompleted.selected.prev }, { y: yoyCompleted.curY, v: yoyCompleted.selected.cur }]
+                      : yoyCompleted.years.map(y => ({ y, v: yoyCompleted.totals[y] }))
+                    ).map(e => (
+                      <div key={e.y}>
+                        <div className="text-xs text-gray-400 mb-0.5">{e.y}</div>
+                        <div className="text-2xl font-bold" style={{ color: yoyCompleted.yearColor(e.y) }}>{e.v != null ? e.v.toLocaleString() : '—'}</div>
                       </div>
                     ))}
-                    {yoyCompleted.delta != null && (
-                      <div>
-                        <div className="text-xs text-gray-400 mb-0.5">{yoyCompleted.curY} vs {yoyCompleted.prevY}</div>
-                        <div className={`text-2xl font-bold ${yoyCompleted.delta >= 0 ? 'metric-positive' : 'metric-negative'}`}>
-                          {yoyCompleted.delta >= 0 ? '+' : ''}{(yoyCompleted.delta * 100).toFixed(1)}%
+                    {(() => {
+                      const g = yoyCompleted.selected ? yoyCompleted.selected.growth : yoyCompleted.delta;
+                      if (g == null) return null;
+                      return (
+                        <div>
+                          <div className="text-xs text-gray-400 mb-0.5">{yoyCompleted.curY} vs {yoyCompleted.prevY}</div>
+                          <div className={`text-2xl font-bold ${g >= 0 ? 'metric-positive' : 'metric-negative'}`}>
+                            {g >= 0 ? '+' : ''}{(g * 100).toFixed(1)}%
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
-                </div>
-              )}
-              {yoyCompleted && yoyCompleted.monthly.length > 0 && (
-                <div className="card p-5">
-                  <div className="text-sm font-semibold text-[#411517] mb-1">Monthly Growth — {yoyCompleted.curY} vs {yoyCompleted.prevY}</div>
-                  <div className="text-xs text-gray-500 mb-3">Completed orders per month, year over year (e.g. September {yoyCompleted.prevY} vs {yoyCompleted.curY}); partial months excluded</div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-xs text-gray-500 uppercase border-b border-gray-800">
-                          <th className="text-left py-2 pr-3">Month</th>
-                          <th className="text-right py-2 pr-3" style={{ color: yoyCompleted.yearColor(yoyCompleted.prevY) }}>{yoyCompleted.prevY}</th>
-                          <th className="text-right py-2 pr-3" style={{ color: yoyCompleted.yearColor(yoyCompleted.curY) }}>{yoyCompleted.curY}</th>
-                          <th className="text-right py-2">Growth</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {yoyCompleted.monthly.map(row => (
-                          <tr key={row.cm} className="border-b border-gray-800/50">
-                            <td className="py-1.5 pr-3 font-medium text-[#411517]">{row.label}</td>
-                            <td className="text-right py-1.5 pr-3" style={{ color: yoyCompleted.yearColor(yoyCompleted.prevY) }}>{row.prev != null ? row.prev.toLocaleString() : '—'}</td>
-                            <td className="text-right py-1.5 pr-3 font-medium" style={{ color: yoyCompleted.yearColor(yoyCompleted.curY) }}>{row.cur != null ? row.cur.toLocaleString() : '—'}</td>
-                            <td className={`text-right py-1.5 font-semibold ${row.growth == null ? '' : row.growth >= 0 ? 'metric-positive' : 'metric-negative'}`}>
-                              {row.growth == null ? '—' : (row.growth >= 0 ? '+' : '') + (row.growth * 100).toFixed(1) + '%'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  {yoyCompleted.selected && (
+                    <div className="text-xs text-gray-500 mt-2">
+                      Same-months total: {yoyCompleted.prevY} {yoyCompleted.totals[yoyCompleted.prevY].toLocaleString()} · {yoyCompleted.curY} {yoyCompleted.totals[yoyCompleted.curY].toLocaleString()}{yoyCompleted.delta != null ? ` (${yoyCompleted.delta >= 0 ? '+' : ''}${(yoyCompleted.delta * 100).toFixed(1)}%)` : ''}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-1.5 mt-3">
+                    {yoyCompleted.monthly.map(m => (
+                      <button key={m.cm}
+                        title={`${m.fullLabel}: ${yoyCompleted.prevY} ${m.prev != null ? m.prev.toLocaleString() : '—'} → ${yoyCompleted.curY} ${m.cur != null ? m.cur.toLocaleString() : '—'} — click to ${m.active ? 'clear' : 'compare'} this month`}
+                        onClick={() => {
+                          const mm = String(m.cm).padStart(2, '0');
+                          const curM = `${yoyCompleted.curY}-${mm}`;
+                          setMonthFilter(m.active ? 'All' : (dataset.months.includes(curM) ? curM : `${yoyCompleted.prevY}-${mm}`));
+                        }}
+                        className={`px-2 py-1 rounded-lg text-xs font-semibold border transition-all ${m.active ? 'border-[#FF5900] bg-[#FF5900]/10' : 'border-gray-700 hover:border-gray-500'} ${m.growth == null ? 'text-gray-400' : m.growth >= 0 ? 'metric-positive' : 'metric-negative'}`}>
+                        {m.label} {m.growth == null ? '—' : (m.growth >= 0 ? '+' : '') + (m.growth * 100).toFixed(1) + '%'}
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}
