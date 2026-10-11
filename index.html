@@ -917,6 +917,31 @@ function App() {
     return { rows, years, yearColor };
   }, [monthChartData]);
 
+  // Completed-orders YoY summary: the same calendar months summed for every year
+  // (e.g. Jan–Sep 2026 vs Jan–Sep 2025 — partial months excluded)
+  const yoyCompleted = useMemo(() => {
+    const years = yoyChartData.years;
+    if (years.length < 2) return null;
+    const cmSets = years.map(y => new Set(monthChartData.filter(d => d.month.slice(0, 4) === y).map(d => +d.month.slice(5))));
+    const shared = [...cmSets[0]].filter(cm => cmSets.every(s => s.has(cm))).sort((a, b) => a - b);
+    if (!shared.length) return null;
+    const totals = {};
+    for (const y of years) {
+      totals[y] = shared.reduce((s, cm) => {
+        const d = monthChartData.find(d => d.month.slice(0, 4) === y && +d.month.slice(5) === cm);
+        return s + (d && d.Orders != null ? d.Orders : 0);
+      }, 0);
+    }
+    const first = shared[0], last = shared[shared.length - 1];
+    const prevY = years[years.length - 2], curY = years[years.length - 1];
+    const delta = totals[prevY] > 0 ? totals[curY] / totals[prevY] - 1 : null;
+    return {
+      years, totals, yearColor: yoyChartData.yearColor,
+      rangeLabel: (MONTH_NAMES[first - 1] || first) + '–' + (MONTH_NAMES[last - 1] || last),
+      curY, prevY, delta,
+    };
+  }, [yoyChartData, monthChartData]);
+
   const citySupplyTable = useMemo(() => {
     return cityChartData.map(d => ({
       ...d,
@@ -1119,8 +1144,30 @@ function App() {
         <div className="space-y-4">
           {yoyChartData.rows.length > 0 ? (
             <>
+              {yoyCompleted && (
+                <div className="card p-5">
+                  <div className="text-sm font-semibold text-[#411517] mb-1">Completed Orders YoY — {yoyCompleted.rangeLabel} (same months)</div>
+                  <div className="text-xs text-gray-500 mb-3">Successful orders summed over the calendar months present in both years (partial months excluded)</div>
+                  <div className="flex flex-wrap gap-x-10 gap-y-3 items-end">
+                    {yoyCompleted.years.map(y => (
+                      <div key={y}>
+                        <div className="text-xs text-gray-400 mb-0.5">{y}</div>
+                        <div className="text-2xl font-bold" style={{ color: yoyCompleted.yearColor(y) }}>{yoyCompleted.totals[y].toLocaleString()}</div>
+                      </div>
+                    ))}
+                    {yoyCompleted.delta != null && (
+                      <div>
+                        <div className="text-xs text-gray-400 mb-0.5">{yoyCompleted.curY} vs {yoyCompleted.prevY}</div>
+                        <div className={`text-2xl font-bold ${yoyCompleted.delta >= 0 ? 'metric-positive' : 'metric-negative'}`}>
+                          {yoyCompleted.delta >= 0 ? '+' : ''}{(yoyCompleted.delta * 100).toFixed(1)}%
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="card p-5">
-                <div className="text-sm font-semibold text-[#411517] mb-3">Orders Over Time — {yoyChartData.years.join(' vs ')}</div>
+                <div className="text-sm font-semibold text-[#411517] mb-3">Completed Orders Over Time — {yoyChartData.years.join(' vs ')}</div>
                 <SimpleLineChart data={yoyChartData.rows} xKey="month"
                   yKeys={yoyChartData.years.map(y => ({ key: 'Orders' + y, color: yoyChartData.yearColor(y), label: y }))}
                   height={230} />
