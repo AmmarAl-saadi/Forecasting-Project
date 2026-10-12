@@ -244,6 +244,20 @@ function numOrNull(v) {
   return isNaN(n) ? null : n;
 }
 
+// [0,1,2,18,19] -> '00–02, 18–19' (compact hour ranges for the DT-binding callout)
+function hourRanges(hs) {
+  const s = [...hs].sort((a, b) => a - b);
+  const parts = [];
+  let i = 0;
+  while (i < s.length) {
+    let j = i;
+    while (j + 1 < s.length && s[j + 1] === s[j] + 1) j++;
+    parts.push(i === j ? String(s[i]).padStart(2, '0') : String(s[i]).padStart(2, '0') + '\u2013' + String(s[j]).padStart(2, '0'));
+    i = j + 1;
+  }
+  return parts.join(', ');
+}
+
 function parseWorkbookToDataset(wb) {
   const dataset = { months: [], cities: new Set(), orders: {}, utr: {}, dt: {}, riders: {}, failRate: {}, extras: [] };
   const primaryMonthsByMetric = {};
@@ -337,6 +351,108 @@ function parseWorkbookToDataset(wb) {
   dataset.months = sortMonths([...monthSet]);
   dataset.cities = [...dataset.cities].sort();
   return dataset;
+}
+
+// ─── Hourly workbook: one sheet per city, rows = hours of the day ──────────────
+// Detects pivot sheets with a "Dimension 1" (hour) header plus Orders Completed /
+// DT / UTR columns (e.g. exports with Grand Total + 0:00..23:00 rows per city).
+function mapHourlyColumns(headerCells) {
+  const map = { hour: -1, orders: -1, utr: -1, dt: -1, idle: -1 };
+  headerCells.forEach((cell, idx) => {
+    const h = normalize(cell);
+    if (!h) return;
+    if (map.hour === -1 && (h.includes('dimension 1') || h === 'hour' || h === 'hour of day')) { map.hour = idx; return; }
+    if (map.orders === -1 && h.includes('orders completed')) { map.orders = idx; return; }
+    if (map.utr === -1 && h === 'utr') { map.utr = idx; return; }
+    if (map.dt === -1 && h === 'dt') { map.dt = idx; return; }
+    if (map.idle === -1 && h.includes('idle')) { map.idle = idx; return; }
+  });
+  return (map.hour !== -1 && map.orders !== -1 && map.utr !== -1 && map.dt !== -1) ? map : null;
+}
+
+function parseHourlyWorkbook(wb) {
+  const cities = {};
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+    let hdr = -1, col = null;
+    for (let i = 0; i < Math.min(rows.length, 8); i++) {
+      const m = mapHourlyColumns(rows[i]);
+      if (m) { hdr = i; col = m; break; }
+    }
+    if (!col) continue;
+    const hours = {};
+    for (let i = hdr + 1; i < rows.length; i++) {
+      const r = rows[i];
+      if (rowIsBlank(r)) continue;
+      const first = String(r[col.hour] ?? '').trim();
+      if (!first || /^(grand total|total)$/i.test(first)) continue;
+      const mm = first.match(/^(\d{1,2})[:.]/) || first.match(/^(\d{1,2})$/);
+      if (!mm) continue;
+      const h = parseInt(mm[1], 10);
+      if (!(h >= 0 && h <= 23)) continue;
+      const orders = numOrNull(r[col.orders]);
+      const utr = numOrNull(r[col.utr]);
+      const dt = numOrNull(r[col.dt]);
+      if (orders == null || orders <= 0 || utr == null || utr <= 0 || dt == null || dt <= 0) continue;
+      hours[h] = { orders, utr, dt, idle: col.idle !== -1 ? numOrNull(r[col.idle]) : null };
+    }
+    if (Object.keys(hours).length >= 3) cities[String(sheetName).trim()] = hours;
+  }
+  return Object.keys(cities).length ? { cities } : null;
+}
+
+// Standalone branded HTML report for the hourly coverage view (download button).
+function buildHourlyReportHtml(hourlyPlan, tUtr, tDt) {
+  const AR = '→', DASH = '—', MID = '·', MUL = '×';
+  const fmt = n => Math.round(n).toLocaleString();
+  const ACCENTS = ['#FF5900', '#411517', '#C0392B', '#4C7A00'];
+  const maxR = Math.max(...hourlyPlan.pooled.map(p => Math.max(p.riders, p.rec)));
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const cards = hourlyPlan.cityNames.map((city, i) => {
+    const cp = hourlyPlan.perCity[city];
+    const delta = cp.need - cp.now;
+    const peak = cp.shortHours.slice(0, 6).map(c => {
+      const hh = Object.keys(cp.hours).find(k => cp.hours[k] === c);
+      return String(hh).padStart(2, '0') + ':00 +' + Math.ceil(c.gap);
+    }).join(' ' + MID + ' ');
+    return `<div class="cc" style="border-left:4px solid ${ACCENTS[i % 4]}"><div class="cn">${esc(city)}</div>
+<div class="cv">${fmt(cp.now)} ${AR} ${fmt(cp.need)} <span class="cu">rider-h/day</span></div>
+<div class="cs">${delta > 0 ? 'short +' + Math.round(delta) : 'over ' + Math.round(-delta)}</div>
+<div class="ch">peak: ${peak || 'none'}</div></div>`;
+  }).join('');
+  const bars = hourlyPlan.pooled.map(p => {
+    const short = p.gap > 0.5;
+    return `<div class="hb"><span class="hl">${String(p.h).padStart(2, '0')}</span>
+<div class="track"><div class="now" style="width:${p.riders / maxR * 100}%"></div><div class="need${short ? ' short' : ''}" style="width:${p.rec / maxR * 100}%"></div></div>
+<span class="hv">${fmt(p.riders)} ${AR} ${fmt(p.rec)}</span><span class="hg ${short ? 'neg' : 'pos'}">${p.gap > 0 ? '+' : ''}${Math.round(p.gap)}</span></div>`;
+  }).join('');
+  const dtNote = hourlyPlan.dtBinding.length
+    ? `DT-binding hours ${hourRanges(hourlyPlan.dtBinding.map(p => p.h))}: DT above ${tDt}-min target at current headcount`
+    : 'No DT-binding hours';
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Hourly Rider Coverage</title><style>
+body{font-family:'Segoe UI',sans-serif;background:#F4EDE3;margin:0;padding:24px;color:#411517}.wrap{max-width:980px;margin:0 auto}
+h1{font-size:20px;margin:0 0 2px}.sub{color:#96776B;font-size:13px;margin-bottom:16px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+.cc{background:#fff;border:1px solid #EDE3D6;border-radius:12px;padding:12px}
+.cn{font-size:12px;color:#96776B;text-transform:uppercase;letter-spacing:.4px}.cv{font-size:22px;font-weight:700;margin:4px 0}
+.cu{font-size:11px;color:#96776B;font-weight:400}.cs{font-size:13px;font-weight:600}.ch{font-size:11px;color:#7A514A;margin-top:4px}
+.card{background:#fff;border:1px solid #EDE3D6;border-radius:12px;padding:16px;margin-bottom:16px}
+.t{font-size:14px;font-weight:600;margin-bottom:2px}.ts{font-size:12px;color:#96776B;margin-bottom:12px}
+.hb{display:flex;align-items:center;gap:8px;margin:2px 0}.hl{width:22px;font-size:11px;color:#96776B;text-align:right}
+.track{flex:1;height:14px;background:#FAF6EF;border-radius:4px;position:relative;overflow:hidden}
+.now{position:absolute;top:0;left:0;height:7px;background:#D9C6BC}.need{position:absolute;bottom:0;left:0;height:7px;background:#FF5900}.need.short{background:#C0392B}
+.hv{width:96px;font-size:11px}.hg{width:36px;font-size:11px;font-weight:700;text-align:right}.pos{color:#4C7A00}.neg{color:#C0392B}
+.tag{display:inline-block;background:#FF5900;color:#fff;font-size:11px;font-weight:700;border-radius:6px;padding:3px 8px;margin-top:6px}
+</style></head><body><div class="wrap">
+<h1>Hourly Rider Coverage ${DASH} ${esc(hourlyPlan.label || 'September')}</h1>
+<div class="sub">Targets: UTR ${tUtr} ${MID} DT ${tDt} min ${MID} model: recommended = ceil(mean(riders${MUL}UTR/target, riders${MUL}DT/target)) ${MID} ${hourlyPlan.days} days</div>
+<div class="cards">${cards}</div>
+<div class="card"><div class="t">Riders on shift vs needed ${DASH} all cities</div>
+<div class="ts">gray = estimated on shift ${MID} orange/red = recommended (red = short hour)</div>${bars}</div>
+<div class="card"><div class="t">Hours that need riders</div>
+<div class="tag">${esc(dtNote)}</div></div>
+</div></body></html>`;
 }
 
 // ─── Build long-format records from wide dataset ───────────────────────────────
@@ -532,11 +648,12 @@ function UploadZone({ onFile, loaded, fileName }) {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: 'array' });
       const dataset = parseWorkbookToDataset(wb);
-      if (dataset.cities.length === 0) {
-        alert('No city data found. Expected either (A) a sheet with one row per city+month and columns like City / Month / UTR / Orders / Delivery Time / Riders, or (B) sheets like Orders, UTR, Delivery Time — each with a "City" header row followed by month columns.');
+      const hourlyDs = parseHourlyWorkbook(wb);
+      if (dataset.cities.length === 0 && !hourlyDs) {
+        alert('No data found. Expected either (A) a monthly workbook — long format City / Month / UTR / Orders / Delivery Time / Riders or City × Month sheets — or (B) an hourly workbook: one sheet per city with rows for hours and columns like Dimension 1 / Orders Completed / DT / UTR.');
         return;
       }
-      onFile(dataset, file.name);
+      onFile(dataset, file.name, hourlyDs);
     } catch (e) {
       alert('Error reading file: ' + e.message);
     }
@@ -563,7 +680,7 @@ function UploadZone({ onFile, loaded, fileName }) {
         {loaded ? fileName : 'Upload Logistics Metrics workbook'}
       </div>
       <div className="text-xs text-gray-500 mt-1">
-        {loaded ? 'Click to replace with a new month\'s file' : 'Long format: City / Month / UTR / Orders / Delivery Time / Riders — or old City × Month sheets'}
+        {loaded ? 'Click to replace — monthly (City / Month rows) or hourly (one sheet per city, rows = hours)' : 'Long format: City / Month / UTR / Orders / Delivery Time / Riders — or hourly: one sheet per city, rows = hours'}
       </div>
     </div>
   );
@@ -585,6 +702,9 @@ function App() {
   const [yoyEdit, setYoyEdit] = useState('');    // '' = auto (median of YoY ratios)
   const [momBasis, setMomBasis] = useState('recent'); // 'recent' (last 6 MoM ratios — default) | 'all' (full history)
   const [fcOvr, setFcOvr] = useState({});        // { [city]: '10' } typed growth-% row override (missing/'' = auto)
+  const [hourly, setHourly] = useState(null);     // hourly workbook (one sheet per city, rows = hours) or null
+  const [hourlyDays, setHourlyDays] = useState(30); // days in the hourly month (rider-hour math)
+  const [hourlyTableCity, setHourlyTableCity] = useState('All'); // detail-table scope on the Hourly tab
 
   const records = useMemo(() => buildRecords(dataset), [dataset]);
 
@@ -974,12 +1094,70 @@ function App() {
     }));
   }, [cityChartData, targetUtr, targetDt]);
 
+  // ─── Hourly coverage plan: riders on shift vs needed, per city and hour ──────
+  // riders_on_h = orders/(utr × days); needUtr = riders×UTR/target; needDt = riders×DT/target;
+  // recommended = ceil((needUtr + needDt)/2) — same balanced model as the Rider Plan.
+  const hourlyPlan = useMemo(() => {
+    if (!hourly) return null;
+    const days = hourlyDays > 0 ? hourlyDays : 30;
+    const cityNames = Object.keys(hourly.cities).sort();
+    const perCity = {};
+    for (const city of cityNames) {
+      const hours = {};
+      const vals = [];
+      for (let h = 0; h < 24; h++) {
+        const d = hourly.cities[city][h];
+        if (!d) { hours[h] = null; continue; }
+        const riders = d.orders / d.utr / days;
+        const needUtr = targetUtr > 0 ? riders * d.utr / targetUtr : 0;
+        const needDt = targetDt > 0 ? riders * d.dt / targetDt : 0;
+        const rec = Math.ceil((needUtr + needDt) / 2);
+        const row = { orders: d.orders, utr: d.utr, dt: d.dt, idle: d.idle, riders, needUtr, needDt, rec, gap: rec - riders };
+        hours[h] = row; vals.push(row);
+      }
+      perCity[city] = {
+        hours,
+        now: vals.reduce((s, c) => s + c.riders, 0),
+        need: vals.reduce((s, c) => s + c.rec, 0),
+        shortHours: vals.filter(c => c.gap > 0.5).sort((a, b) => b.gap - a.gap),
+      };
+    }
+    const pooled = [];
+    for (let h = 0; h < 24; h++) {
+      let orders = 0, rh = 0, dtW = 0, nu = 0, nd = 0, rec = 0, present = false;
+      for (const city of cityNames) {
+        const c = perCity[city].hours[h];
+        if (!c) continue;
+        present = true;
+        orders += c.orders; rh += c.orders / c.utr; dtW += c.orders * c.dt;
+        nu += c.needUtr; nd += c.needDt; rec += c.rec;
+      }
+      if (!present) continue;
+      const riders = rh / days;
+      pooled.push({ h, orders, utr: orders / rh, dt: dtW / orders, riders, needUtr: nu, needDt: nd, rec, gap: rec - riders });
+    }
+    const dtBinding = pooled.filter(p => p.needDt > p.riders + 0.5);
+    return { perCity, cityNames, pooled, days, dtBinding };
+  }, [hourly, hourlyDays, targetUtr, targetDt]);
+
+  const downloadHourlyReport = () => {
+    if (!hourlyPlan) return;
+    const html = buildHourlyReportHtml(hourlyPlan, targetUtr, targetDt);
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'hourly_coverage_report.html';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   const tabs = [
     { id: 'overview', label: 'Overview' },
     { id: 'cities',   label: 'By City'  },
     { id: 'trends',   label: 'Trends'   },
     ...(hasFailRate ? [{ id: 'fail', label: 'Fail Rate & Extras' }] : []),
     { id: 'supply',   label: 'Rider Plan' },
+    { id: 'hourly',   label: 'Hourly'  },
     { id: 'forecast', label: 'Next Month' },
   ];
 
@@ -1027,7 +1205,14 @@ function App() {
         <UploadZone
           loaded={true}
           fileName={fileName}
-          onFile={(ds, name) => { setDataset(ds); setFileName(name); setIsDefault(false); setCityFilter('All'); setMonthFilter('All'); setMomEdit(''); setSiEdit(''); setYoyEdit(''); }}
+          onFile={(ds, name, hourlyDs) => {
+            if (ds.cities.length > 0) {
+              setDataset(ds); setCityFilter('All'); setMonthFilter('All'); setMomEdit(''); setSiEdit(''); setYoyEdit('');
+            }
+            if (hourlyDs) { setHourly(hourlyDs); setActiveTab('hourly'); }
+            if (ds.cities.length > 0 || hourlyDs) setFileName(name);
+            if (ds.cities.length > 0) setIsDefault(false);
+          }}
         />
       </div>
 
@@ -1392,6 +1577,124 @@ function App() {
               </table>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── HOURLY COVERAGE ── */}
+      {activeTab === 'hourly' && (
+        <div className="space-y-4">
+          {!hourlyPlan ? (
+            <div className="card p-10 text-center">
+              <div className="text-3xl mb-2">&#128336;</div>
+              <div className="font-semibold text-[#411517] mb-1">No hourly workbook loaded</div>
+              <div className="text-xs text-gray-500 max-w-lg mx-auto">Upload an hourly file — one sheet per city, rows = hours of the day, columns like <span className="text-[#FF5900]">Dimension 1 / Orders Completed / DT / UTR</span> — to see rider coverage by hour. The monthly dashboard keeps its current data.</div>
+            </div>
+          ) : (
+            <>
+              <div className="card p-4 flex flex-wrap items-center gap-3">
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Hourly Rider Coverage</div>
+                <div className="text-xs text-gray-500">{hourlyPlan.cityNames.length} cities &#183; riders on shift = orders ÷ UTR ÷ days &#183; recommended = ceil(mean(riders×UTR/target, riders×DT/target))</div>
+                <div className="flex items-center gap-2 ml-auto">
+                  <label className="text-xs text-gray-400 whitespace-nowrap">Days in month</label>
+                  <input type="number" min="1" max="31" className="rounded-lg px-2 py-1.5 text-sm w-16 text-center" value={hourlyDays} onChange={e => setHourlyDays(Number(e.target.value))} />
+                </div>
+                <button onClick={downloadHourlyReport} data-testid="hourly-report-dl"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#FF5900] text-white hover:opacity-90">Download report</button>
+              </div>
+              <div className="grid md:grid-cols-4 gap-3">
+                {hourlyPlan.cityNames.map((city, i) => {
+                  const cp = hourlyPlan.perCity[city];
+                  const delta = cp.need - cp.now;
+                  const ACCENTS = ['#FF5900', '#411517', '#C0392B', '#4C7A00'];
+                  return (
+                    <div key={city} className="card p-4" style={{ borderLeft: `4px solid ${ACCENTS[i % 4]}` }}>
+                      <div className="text-xs text-gray-400 uppercase tracking-wider">{city}</div>
+                      <div className="text-2xl font-bold mt-1">{Math.round(cp.now).toLocaleString()} <span className="text-gray-300 font-normal text-lg">&#8594;</span> {Math.round(cp.need).toLocaleString()}</div>
+                      <div className="text-xs text-gray-500 mb-1">rider-h/day</div>
+                      <div className={`text-sm font-semibold ${delta > 0 ? 'metric-negative' : 'metric-positive'}`}>{delta > 0 ? `short +${Math.round(delta)}` : `over ${Math.round(-delta)}`}</div>
+                      <div className="text-xs text-gray-500 mt-1">peak: {cp.shortHours.slice(0, 6).map(c => {
+                        const hh = Object.keys(cp.hours).find(k => cp.hours[k] === c);
+                        return `${String(hh).padStart(2, '0')}:00 +${Math.ceil(c.gap)}`;
+                      }).join(' · ') || 'none'}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="card p-5">
+                <div className="text-sm font-semibold text-[#411517] mb-1">Riders on shift vs needed — all cities</div>
+                <div className="text-xs text-gray-500 mb-3">gray = estimated on shift · orange/red = recommended (red = short hour)</div>
+                <div className="flex items-center gap-2 mb-1 text-xs text-gray-500"><span className="inline-block w-4 h-1.5 rounded-sm" style={{ background: '#D9C6BC' }} /> on shift <span className="inline-block w-4 h-1.5 rounded-sm ml-3" style={{ background: '#FF5900' }} /> needed</div>
+                {(() => {
+                  const maxR = Math.max(...hourlyPlan.pooled.map(p => Math.max(p.riders, p.rec)));
+                  return hourlyPlan.pooled.map(p => {
+                    const short = p.gap > 0.5;
+                    return (
+                      <div key={p.h} className="flex items-center gap-2 my-0.5">
+                        <span className="w-6 text-right text-[11px] text-gray-400">{String(p.h).padStart(2, '0')}</span>
+                        <div className="flex-1 h-3.5 rounded relative overflow-hidden" style={{ background: '#FAF6EF' }}>
+                          <div className="absolute top-0 left-0 h-[7px]" style={{ width: `${p.riders / maxR * 100}%`, background: '#D9C6BC' }} />
+                          <div className="absolute bottom-0 left-0 h-[7px]" style={{ width: `${p.rec / maxR * 100}%`, background: short ? '#C0392B' : '#FF5900' }} />
+                        </div>
+                        <span className="w-24 text-[11px]">{Math.round(p.riders).toLocaleString()} &#8594; {Math.round(p.rec).toLocaleString()}</span>
+                        <span className={`w-10 text-right text-[11px] font-bold ${short ? 'metric-negative' : 'metric-positive'}`}>{p.gap > 0 ? '+' : ''}{Math.round(p.gap)}</span>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+              {hourlyPlan.dtBinding.length > 0 && (
+                <div className="card p-3 text-xs font-semibold text-white" style={{ background: '#FF5900' }}>
+                  DT-binding hours {hourRanges(hourlyPlan.dtBinding.map(p => p.h))}: DT above {targetDt}-min target at current headcount (check vendor prep before adding riders)
+                </div>
+              )}
+              <div className="card p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <div className="text-sm font-semibold text-[#411517]">Hourly detail</div>
+                  <select className="rounded-lg px-3 py-1.5 text-sm" value={hourlyTableCity} onChange={e => setHourlyTableCity(e.target.value)}>
+                    <option value="All">All cities (pooled)</option>
+                    {hourlyPlan.cityNames.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-gray-500 uppercase border-b border-gray-800">
+                        <th className="text-left py-2 pr-3">Hour</th>
+                        <th className="text-right py-2 pr-3">Orders</th>
+                        <th className="text-right py-2 pr-3">UTR</th>
+                        <th className="text-right py-2 pr-3">DT</th>
+                        <th className="text-right py-2 pr-3">On shift</th>
+                        <th className="text-right py-2 pr-3">For UTR</th>
+                        <th className="text-right py-2 pr-3">For DT</th>
+                        <th className="text-right py-2 pr-3">Needed</th>
+                        <th className="text-right py-2 pr-3">Gap</th>
+                        <th className="text-right py-2">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(hourlyTableCity === 'All' ? hourlyPlan.pooled : Object.entries(hourlyPlan.perCity[hourlyTableCity].hours).filter(([, c]) => c).map(([h, c]) => ({ h: +h, ...c }))).map(row => {
+                        const short = row.gap > 0.5;
+                        return (
+                          <tr key={row.h} className="border-b border-gray-800/50">
+                            <td className="py-1.5 pr-3 font-medium text-[#411517]">{String(row.h).padStart(2, '0')}:00</td>
+                            <td className="text-right py-1.5 pr-3">{Math.round(row.orders).toLocaleString()}</td>
+                            <td className="text-right py-1.5 pr-3">{row.utr.toFixed(2)}</td>
+                            <td className="text-right py-1.5 pr-3">{row.dt.toFixed(1)}</td>
+                            <td className="text-right py-1.5 pr-3">{Math.round(row.riders).toLocaleString()}</td>
+                            <td className="text-right py-1.5 pr-3">{Math.round(row.needUtr).toLocaleString()}</td>
+                            <td className="text-right py-1.5 pr-3">{Math.round(row.needDt).toLocaleString()}</td>
+                            <td className="text-right py-1.5 pr-3 font-semibold text-[#411517]">{Math.round(row.rec).toLocaleString()}</td>
+                            <td className={`text-right py-1.5 pr-3 font-semibold ${short ? 'metric-negative' : row.gap < -0.5 ? 'metric-positive' : ''}`}>{row.gap > 0 ? '+' : ''}{Math.round(row.gap)}</td>
+                            <td className={`text-right py-1.5 text-xs font-semibold ${short ? 'metric-negative' : row.gap < -0.5 ? 'text-gray-400' : ''}`}>{short ? 'SHORT' : row.gap < -0.5 ? 'over' : 'ok'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 

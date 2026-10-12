@@ -28,6 +28,7 @@ Columns are auto-matched by keyword (`city`, `month`, `utr`, `successful/order`,
 | Trends | **Completed Orders YoY** card — same-calendar-months totals per year (e.g. Jan–Sep 2026 vs Jan–Sep 2025) with per-month **growth % chips** (Jan +21.0% …; click a chip to compare that month YoY, or pick it in the Month filter and the card zooms to that month) + year-over-year line charts — every metric drawn as two lines per calendar month: **2025 (brown `#411517`) vs 2026 (orange `#FF5900`)** |
 | Fail Rate | Net fail rate + breakdown (only shown when the file contains fail-rate data) |
 | Rider Plan | Target sliders, status legend, per-city rider plan table |
+| Hourly | **Hourly rider coverage** (upload an hourly workbook: one sheet per city, rows = hours, columns like Dimension 1 / Orders Completed / DT / UTR — monthly dashboard keeps its data). City cards (rider-h/day now → needed, short/over, peak short hours), 24-hour on-shift vs needed bars, DT-binding hours callout, per-city hourly detail table (For UTR / For DT / Needed / Gap / Status), editable **days in month**, and a **Download report** button that exports the same view as a standalone branded HTML file. Model: riders_on = orders÷UTR÷days; needUTR = riders×UTR/target; needDT = riders×DT/target; recommended = ceil(mean) |
 | Next Month | YoY-anchored forecast of next month's orders & riders needed (MoM × Seasonal equation available as a toggle) |
 
 ## Supply status logic
