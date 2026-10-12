@@ -407,9 +407,10 @@ function buildHourlyReportHtml(hourlyPlan, tUtr, tDt) {
   const AR = '→', DASH = '—', MID = '·', MUL = '×';
   const fmt = n => Math.round(n).toLocaleString();
   const ACCENTS = ['#FF5900', '#411517', '#C0392B', '#4C7A00'];
-  const maxR = Math.max(...hourlyPlan.pooled.map(p => Math.max(p.riders, p.rec)));
+  const maxR = Math.max(...hourlyPlan.rows.map(p => Math.max(p.riders, p.rec)));
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-  const cards = hourlyPlan.cityNames.map((city, i) => {
+  const cards = hourlyPlan.cards.map((city) => {
+    const i = hourlyPlan.cityNames.indexOf(city);
     const cp = hourlyPlan.perCity[city];
     const delta = cp.need - cp.now;
     const peak = cp.shortHours.slice(0, 6).map(c => {
@@ -421,7 +422,7 @@ function buildHourlyReportHtml(hourlyPlan, tUtr, tDt) {
 <div class="cs">${delta > 0 ? 'short +' + Math.round(delta) : 'over ' + Math.round(-delta)}</div>
 <div class="ch">peak: ${peak || 'none'}</div></div>`;
   }).join('');
-  const bars = hourlyPlan.pooled.map(p => {
+  const bars = hourlyPlan.rows.map(p => {
     const short = p.gap > 0.5;
     return `<div class="hb"><span class="hl">${String(p.h).padStart(2, '0')}</span>
 <div class="track"><div class="now" style="width:${p.riders / maxR * 100}%"></div><div class="need${short ? ' short' : ''}" style="width:${p.rec / maxR * 100}%"></div></div>
@@ -445,7 +446,7 @@ h1{font-size:20px;margin:0 0 2px}.sub{color:#96776B;font-size:13px;margin-bottom
 .hv{width:96px;font-size:11px}.hg{width:36px;font-size:11px;font-weight:700;text-align:right}.pos{color:#4C7A00}.neg{color:#C0392B}
 .tag{display:inline-block;background:#FF5900;color:#fff;font-size:11px;font-weight:700;border-radius:6px;padding:3px 8px;margin-top:6px}
 </style></head><body><div class="wrap">
-<h1>Hourly Rider Coverage ${DASH} ${esc(hourlyPlan.label || 'September')}</h1>
+<h1>Hourly Rider Coverage ${DASH} ${esc(hourlyPlan.label || 'September')}${hourlyPlan.citySel && hourlyPlan.citySel !== 'All' ? ' (' + esc(hourlyPlan.citySel) + ')' : ''}</h1>
 <div class="sub">Targets: UTR ${tUtr} ${MID} DT ${tDt} min ${MID} model: recommended = ceil(mean(riders${MUL}UTR/target, riders${MUL}DT/target)) ${MID} ${hourlyPlan.days} days</div>
 <div class="cards">${cards}</div>
 <div class="card"><div class="t">Riders on shift vs needed ${DASH} all cities</div>
@@ -728,7 +729,7 @@ function App() {
   const [hourly, setHourly] = useState(null);     // hourly workbook (one sheet per city, rows = hours) or null
   const [hourlyFileName, setHourlyFileName] = useState(''); // name of the loaded hourly file
   const [hourlyDays, setHourlyDays] = useState(30); // days in the hourly month (rider-hour math)
-  const [hourlyTableCity, setHourlyTableCity] = useState('All'); // detail-table scope on the Hourly tab
+  const [hourlyCity, setHourlyCity] = useState('All'); // city filter for the Hourly tab (cards, bars, callout, table)
 
   const records = useMemo(() => buildRecords(dataset), [dataset]);
 
@@ -1160,9 +1161,14 @@ function App() {
       const riders = rh / days;
       pooled.push({ h, orders, utr: orders / rh, dt: dtW / orders, riders, needUtr: nu, needDt: nd, rec, gap: rec - riders });
     }
-    const dtBinding = pooled.filter(p => p.needDt > p.riders + 0.5);
-    return { perCity, cityNames, pooled, days, dtBinding };
-  }, [hourly, hourlyDays, targetUtr, targetDt]);
+    const dtBindingAll = pooled.filter(p => p.needDt > p.riders + 0.5);
+    const rows = hourlyCity === 'All'
+      ? pooled
+      : Object.entries(perCity[hourlyCity] ? perCity[hourlyCity].hours : {}).filter(([, c]) => c).map(([h, c]) => ({ h: +h, ...c }));
+    const dtBinding = hourlyCity === 'All' ? dtBindingAll : rows.filter(p => p.needDt > p.riders + 0.5);
+    const cards = hourlyCity === 'All' ? cityNames : cityNames.filter(c => c === hourlyCity);
+    return { perCity, cityNames, pooled, rows, cards, days, dtBinding, citySel: hourlyCity };
+  }, [hourly, hourlyDays, targetUtr, targetDt, hourlyCity]);
 
   const downloadHourlyReport = () => {
     if (!hourlyPlan) return;
@@ -1625,6 +1631,10 @@ function App() {
                 <div className="flex items-center gap-2 ml-auto flex-wrap">
                   <UploadZone kind="hourly" compact loaded={!!hourly} fileName={hourlyFileName}
                     onFile={(ds, name, hourlyDs) => { if (hourlyDs) { setHourly(hourlyDs); setHourlyFileName(name); } }} />
+                  <select className="rounded-lg px-3 py-1.5 text-sm" value={hourlyCity} onChange={e => setHourlyCity(e.target.value)}>
+                    <option value="All">All cities</option>
+                    {hourlyPlan.cityNames.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
                   <label className="text-xs text-gray-400 whitespace-nowrap">Days in month</label>
                   <input type="number" min="1" max="31" className="rounded-lg px-2 py-1.5 text-sm w-16 text-center" value={hourlyDays} onChange={e => setHourlyDays(Number(e.target.value))} />
                   <button onClick={downloadHourlyReport} data-testid="hourly-report-dl"
@@ -1632,7 +1642,8 @@ function App() {
                 </div>
               </div>
               <div className="grid md:grid-cols-4 gap-3">
-                {hourlyPlan.cityNames.map((city, i) => {
+                {hourlyPlan.cards.map((city) => {
+                  const i = hourlyPlan.cityNames.indexOf(city);
                   const cp = hourlyPlan.perCity[city];
                   const delta = cp.need - cp.now;
                   const ACCENTS = ['#FF5900', '#411517', '#C0392B', '#4C7A00'];
@@ -1651,12 +1662,12 @@ function App() {
                 })}
               </div>
               <div className="card p-5">
-                <div className="text-sm font-semibold text-[#411517] mb-1">Riders on shift vs needed — all cities</div>
+                <div className="text-sm font-semibold text-[#411517] mb-1">Riders on shift vs needed — {hourlyPlan.citySel === 'All' ? 'all cities' : hourlyPlan.citySel}</div>
                 <div className="text-xs text-gray-500 mb-3">gray = estimated on shift · orange/red = recommended (red = short hour)</div>
                 <div className="flex items-center gap-2 mb-1 text-xs text-gray-500"><span className="inline-block w-4 h-1.5 rounded-sm" style={{ background: '#D9C6BC' }} /> on shift <span className="inline-block w-4 h-1.5 rounded-sm ml-3" style={{ background: '#FF5900' }} /> needed</div>
                 {(() => {
-                  const maxR = Math.max(...hourlyPlan.pooled.map(p => Math.max(p.riders, p.rec)));
-                  return hourlyPlan.pooled.map(p => {
+                  const maxR = Math.max(...hourlyPlan.rows.map(p => Math.max(p.riders, p.rec)));
+                  return hourlyPlan.rows.map(p => {
                     const short = p.gap > 0.5;
                     return (
                       <div key={p.h} className="flex items-center gap-2 my-0.5">
@@ -1679,11 +1690,8 @@ function App() {
               )}
               <div className="card p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                  <div className="text-sm font-semibold text-[#411517]">Hourly detail</div>
-                  <select className="rounded-lg px-3 py-1.5 text-sm" value={hourlyTableCity} onChange={e => setHourlyTableCity(e.target.value)}>
-                    <option value="All">All cities (pooled)</option>
-                    {hourlyPlan.cityNames.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  <div className="text-sm font-semibold text-[#411517]">Hourly detail — {hourlyPlan.citySel === 'All' ? 'all cities (pooled)' : hourlyPlan.citySel}</div>
+                  <div className="text-xs text-gray-500">{hourlyPlan.rows.length} hours &#183; target UTR {targetUtr} / DT {targetDt} min &#183; days {hourlyPlan.days}</div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -1702,7 +1710,7 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {(hourlyTableCity === 'All' ? hourlyPlan.pooled : Object.entries(hourlyPlan.perCity[hourlyTableCity].hours).filter(([, c]) => c).map(([h, c]) => ({ h: +h, ...c }))).map(row => {
+                      {hourlyPlan.rows.map(row => {
                         const short = row.gap > 0.5;
                         return (
                           <tr key={row.h} className="border-b border-gray-800/50">
