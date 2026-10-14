@@ -357,11 +357,12 @@ function parseWorkbookToDataset(wb) {
 // Detects pivot sheets with a "Dimension 1" (hour) header plus Orders Completed /
 // DT / UTR columns (e.g. exports with Grand Total + 0:00..23:00 rows per city).
 function mapHourlyColumns(headerCells) {
-  const map = { hour: -1, orders: -1, utr: -1, dt: -1, idle: -1 };
+  const map = { hour: -1, orders: -1, utr: -1, dt: -1, idle: -1, date: -1 };
   headerCells.forEach((cell, idx) => {
     const h = normalize(cell);
     if (!h) return;
     if (map.hour === -1 && (h.includes('dimension 1') || h === 'hour' || h === 'hour of day')) { map.hour = idx; return; }
+    if (map.date === -1 && (h.includes('date') || h === 'day' || h === 'dimension 2')) { map.date = idx; return; }
     if (map.orders === -1 && h.includes('orders completed')) { map.orders = idx; return; }
     if (map.utr === -1 && h === 'utr') { map.utr = idx; return; }
     if (map.dt === -1 && h === 'dt') { map.dt = idx; return; }
@@ -370,8 +371,24 @@ function mapHourlyColumns(headerCells) {
   return (map.hour !== -1 && map.orders !== -1 && map.utr !== -1 && map.dt !== -1) ? map : null;
 }
 
+// Date cell -> 'YYYY-MM-DD'. Accepts Date objects, Excel serial numbers, or ISO-like strings.
+function hourDateKey(v) {
+  if (v == null || v === '') return null;
+  const pad = n => String(n).padStart(2, '0');
+  if (v instanceof Date && !isNaN(v)) return v.getFullYear() + '-' + pad(v.getMonth() + 1) + '-' + pad(v.getDate());
+  if (typeof v === 'number' && isFinite(v) && v > 20000 && v < 80000) {
+    const d = new Date(Math.round((v - 25569) * 86400000));
+    return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
+  }
+  const m = String(v).trim().match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (m) return m[1] + '-' + pad(+m[2]) + '-' + pad(+m[3]);
+  return null;
+}
+
 function parseHourlyWorkbook(wb) {
   const cities = {};
+  const allDates = new Set();
+  let hasDates = false;
   for (const sheetName of wb.SheetNames) {
     const ws = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
@@ -381,7 +398,7 @@ function parseHourlyWorkbook(wb) {
       if (m) { hdr = i; col = m; break; }
     }
     if (!col) continue;
-    const hours = {};
+    const byDate = {};
     for (let i = hdr + 1; i < rows.length; i++) {
       const r = rows[i];
       if (rowIsBlank(r)) continue;
@@ -395,11 +412,23 @@ function parseHourlyWorkbook(wb) {
       const utr = numOrNull(r[col.utr]);
       const dt = numOrNull(r[col.dt]);
       if (orders == null || orders <= 0 || utr == null || utr <= 0 || dt == null || dt <= 0) continue;
-      hours[h] = { orders, utr, dt, idle: col.idle !== -1 ? numOrNull(r[col.idle]) : null };
+      const cell = { orders, utr, dt, idle: col.idle !== -1 ? numOrNull(r[col.idle]) : null };
+      let key = '';
+      if (col.date !== -1) { const k = hourDateKey(r[col.date]); if (k) key = k; }
+      if (!byDate[key]) byDate[key] = {};
+      byDate[key][h] = cell;
     }
-    if (Object.keys(hours).length >= 3) cities[String(sheetName).trim()] = hours;
+    const dkeys = Object.keys(byDate).filter(k => k);
+    if (dkeys.length >= 3) {
+      delete byDate[''];
+      dkeys.forEach(k => allDates.add(k));
+      hasDates = true;
+    }
+    const totalHours = Object.keys(byDate).reduce((n, k) => n + Object.keys(byDate[k]).length, 0);
+    if (totalHours >= 3) cities[String(sheetName).trim()] = byDate;
   }
-  return Object.keys(cities).length ? { cities } : null;
+  const dates = hasDates ? [...allDates].sort() : [];
+  return Object.keys(cities).length ? { cities, hasDates, dates } : null;
 }
 
 // Standalone branded HTML report for the hourly coverage view (download button).
@@ -407,7 +436,7 @@ function buildHourlyReportHtml(hourlyPlan, tUtr, tDt) {
   const AR = '→', DASH = '—', MID = '·', MUL = '×';
   const fmt = n => Math.round(n).toLocaleString();
   const ACCENTS = ['#FF5900', '#411517', '#C0392B', '#4C7A00'];
-  const maxR = Math.max(...hourlyPlan.rows.map(p => Math.max(p.riders, p.rec)));
+                  const maxR = Math.max(1, ...hourlyPlan.rows.map(p => Math.max(p.riders, p.rec)));
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const cards = hourlyPlan.cards.map((city) => {
     const i = hourlyPlan.cityNames.indexOf(city);
@@ -446,7 +475,7 @@ h1{font-size:20px;margin:0 0 2px}.sub{color:#96776B;font-size:13px;margin-bottom
 .hv{width:96px;font-size:11px}.hg{width:36px;font-size:11px;font-weight:700;text-align:right}.pos{color:#4C7A00}.neg{color:#C0392B}
 .tag{display:inline-block;background:#FF5900;color:#fff;font-size:11px;font-weight:700;border-radius:6px;padding:3px 8px;margin-top:6px}
 </style></head><body><div class="wrap">
-<h1>Hourly Rider Coverage ${DASH} ${esc(hourlyPlan.label || 'September')}${hourlyPlan.citySel && hourlyPlan.citySel !== 'All' ? ' (' + esc(hourlyPlan.citySel) + ')' : ''}</h1>
+<h1>Hourly Rider Coverage ${DASH} ${esc(hourlyPlan.rangeLabel || hourlyPlan.label || 'September')}${hourlyPlan.citySel && hourlyPlan.citySel !== 'All' ? ' (' + esc(hourlyPlan.citySel) + ')' : ''}</h1>
 <div class="sub">Targets: UTR ${tUtr} ${MID} DT ${tDt} min ${MID} model: recommended = ceil(mean(riders${MUL}UTR/target, riders${MUL}DT/target)) ${MID} ${hourlyPlan.days} days</div>
 <div class="cards">${cards}</div>
 <div class="card"><div class="t">Riders on shift vs needed ${DASH} all cities</div>
@@ -730,6 +759,17 @@ function App() {
   const [hourlyFileName, setHourlyFileName] = useState(''); // name of the loaded hourly file
   const [hourlyDays, setHourlyDays] = useState(30); // days in the hourly month (rider-hour math)
   const [hourlyCity, setHourlyCity] = useState('All'); // city filter for the Hourly tab (cards, bars, callout, table)
+  const [hourlyFrom, setHourlyFrom] = useState('');   // date-range filter (From) — only when the hourly file has dates
+  const [hourlyTo, setHourlyTo] = useState('');       // date-range filter (To)
+
+  const applyHourly = (ds, name) => {                 // load an hourly workbook + default the range to its full span
+    if (!ds) return;
+    setHourly(ds);
+    setHourlyFileName(name);
+    const dsDates = (ds.dates && ds.dates.length) ? ds.dates : [];
+    setHourlyFrom(dsDates.length ? dsDates[0] : '');
+    setHourlyTo(dsDates.length ? dsDates[dsDates.length - 1] : '');
+  };
 
   const records = useMemo(() => buildRecords(dataset), [dataset]);
 
@@ -1124,20 +1164,32 @@ function App() {
   // recommended = ceil((needUtr + needDt)/2) — same balanced model as the Rider Plan.
   const hourlyPlan = useMemo(() => {
     if (!hourly) return null;
-    const days = hourlyDays > 0 ? hourlyDays : 30;
     const cityNames = Object.keys(hourly.cities).sort();
+    const hasDates = !!(hourly.hasDates && hourly.dates && hourly.dates.length);
+    const range = hasDates
+      ? hourly.dates.filter(d => (!hourlyFrom || d >= hourlyFrom) && (!hourlyTo || d <= hourlyTo))
+      : [''];
+    const days = hasDates ? Math.max(range.length, 1) : (hourlyDays > 0 ? hourlyDays : 30);
     const perCity = {};
     for (const city of cityNames) {
+      const dayMap = hourly.cities[city] || {};
       const hours = {};
       const vals = [];
       for (let h = 0; h < 24; h++) {
-        const d = hourly.cities[city][h];
-        if (!d) { hours[h] = null; continue; }
-        const riders = d.orders / d.utr / days;
-        const needUtr = targetUtr > 0 ? riders * d.utr / targetUtr : 0;
-        const needDt = targetDt > 0 ? riders * d.dt / targetDt : 0;
+        let o = 0, rh = 0, dtW = 0, idleW = 0, idleN = 0;
+        for (const dk of range) {
+          const c = dayMap[dk] && dayMap[dk][h];
+          if (!c) continue;
+          o += c.orders; rh += c.orders / c.utr; dtW += c.orders * c.dt;
+          if (c.idle != null) { idleW += c.idle; idleN++; }
+        }
+        if (!o || !rh) { hours[h] = null; continue; }
+        const utr = o / rh, dt = dtW / o, idle = idleN ? idleW / idleN : null;
+        const riders = rh / days;
+        const needUtr = targetUtr > 0 ? riders * utr / targetUtr : 0;
+        const needDt = targetDt > 0 ? riders * dt / targetDt : 0;
         const rec = Math.ceil((needUtr + needDt) / 2);
-        const row = { orders: d.orders, utr: d.utr, dt: d.dt, idle: d.idle, riders, needUtr, needDt, rec, gap: rec - riders };
+        const row = { orders: o, utr, dt, idle, riders, needUtr, needDt, rec, gap: rec - riders };
         hours[h] = row; vals.push(row);
       }
       perCity[city] = {
@@ -1167,8 +1219,9 @@ function App() {
       : Object.entries(perCity[hourlyCity] ? perCity[hourlyCity].hours : {}).filter(([, c]) => c).map(([h, c]) => ({ h: +h, ...c }));
     const dtBinding = hourlyCity === 'All' ? dtBindingAll : rows.filter(p => p.needDt > p.riders + 0.5);
     const cards = hourlyCity === 'All' ? cityNames : cityNames.filter(c => c === hourlyCity);
-    return { perCity, cityNames, pooled, rows, cards, days, dtBinding, citySel: hourlyCity };
-  }, [hourly, hourlyDays, targetUtr, targetDt, hourlyCity]);
+    const rangeLabel = hasDates && range.length ? range[0] + ' → ' + range[range.length - 1] : '';
+    return { perCity, cityNames, pooled, rows, cards, days, dtBinding, citySel: hourlyCity, hasDates, dates: hasDates ? hourly.dates : [], rangeLen: range.length, rangeLabel };
+  }, [hourly, hourlyDays, targetUtr, targetDt, hourlyCity, hourlyFrom, hourlyTo]);
 
   const downloadHourlyReport = () => {
     if (!hourlyPlan) return;
@@ -1239,7 +1292,7 @@ function App() {
             if (ds.cities.length > 0) {
               setDataset(ds); setCityFilter('All'); setMonthFilter('All'); setMomEdit(''); setSiEdit(''); setYoyEdit('');
             }
-            if (hourlyDs) { setHourly(hourlyDs); setHourlyFileName(name); setActiveTab('hourly'); }
+            if (hourlyDs) { applyHourly(hourlyDs, name); setActiveTab('hourly'); }
             if (ds.cities.length > 0 || hourlyDs) setFileName(name);
             if (ds.cities.length > 0) setIsDefault(false);
           }}
@@ -1620,7 +1673,7 @@ function App() {
               <div className="text-xs text-gray-500 max-w-lg mx-auto mb-4">Upload an hourly file — one sheet per city, rows = hours of the day, columns like <span className="text-[#FF5900]">Dimension 1 / Orders Completed / DT / UTR</span> — to see rider coverage by hour. The monthly dashboard keeps its current data.</div>
               <div className="flex justify-center">
                 <UploadZone kind="hourly" compact loaded={false} fileName=""
-                  onFile={(ds, name, hourlyDs) => { if (hourlyDs) { setHourly(hourlyDs); setHourlyFileName(name); } }} />
+                  onFile={(ds, name, hourlyDs) => { if (hourlyDs) applyHourly(hourlyDs, name); }} />
               </div>
             </div>
           ) : (
@@ -1630,13 +1683,28 @@ function App() {
                 <div className="text-xs text-gray-500">{hourlyPlan.cityNames.length} cities &#183; riders on shift = orders ÷ UTR ÷ days &#183; recommended = ceil(mean(riders×UTR/target, riders×DT/target))</div>
                 <div className="flex items-center gap-2 ml-auto flex-wrap">
                   <UploadZone kind="hourly" compact loaded={!!hourly} fileName={hourlyFileName}
-                    onFile={(ds, name, hourlyDs) => { if (hourlyDs) { setHourly(hourlyDs); setHourlyFileName(name); } }} />
+                    onFile={(ds, name, hourlyDs) => { if (hourlyDs) applyHourly(hourlyDs, name); }} />
                   <select className="rounded-lg px-3 py-1.5 text-sm" value={hourlyCity} onChange={e => setHourlyCity(e.target.value)}>
                     <option value="All">All cities</option>
                     {hourlyPlan.cityNames.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
-                  <label className="text-xs text-gray-400 whitespace-nowrap">Days in month</label>
-                  <input type="number" min="1" max="31" className="rounded-lg px-2 py-1.5 text-sm w-16 text-center" value={hourlyDays} onChange={e => setHourlyDays(Number(e.target.value))} />
+                  <label className="text-xs text-gray-400 whitespace-nowrap">From</label>
+                  <input type="date" className="rounded-lg px-2 py-1.5 text-sm" value={hourlyFrom}
+                    min={hourlyPlan.dates[0]} max={hourlyPlan.dates[hourlyPlan.dates.length - 1]}
+                    disabled={!hourlyPlan.hasDates}
+                    onChange={e => { const v = e.target.value; setHourlyFrom(v); if (hourlyTo && v && v > hourlyTo) setHourlyTo(v); }} />
+                  <label className="text-xs text-gray-400 whitespace-nowrap">To</label>
+                  <input type="date" className="rounded-lg px-2 py-1.5 text-sm" value={hourlyTo}
+                    min={hourlyPlan.dates[0]} max={hourlyPlan.dates[hourlyPlan.dates.length - 1]}
+                    disabled={!hourlyPlan.hasDates}
+                    onChange={e => { const v = e.target.value; setHourlyTo(v); if (hourlyFrom && v && v < hourlyFrom) setHourlyFrom(v); }} />
+                  {!hourlyPlan.hasDates && <span className="text-xs text-gray-400 italic whitespace-nowrap">no dates in file</span>}
+                  {hourlyPlan.hasDates
+                    ? <span className="text-xs font-semibold text-[#FF5900] whitespace-nowrap">{hourlyPlan.rangeLabel} &#183; {hourlyPlan.days} day{hourlyPlan.days === 1 ? '' : 's'}</span>
+                    : (<>
+                        <label className="text-xs text-gray-400 whitespace-nowrap">Days in month</label>
+                        <input type="number" min="1" max="31" className="rounded-lg px-2 py-1.5 text-sm w-16 text-center" value={hourlyDays} onChange={e => setHourlyDays(Number(e.target.value))} />
+                      </>)}
                   <button onClick={downloadHourlyReport} data-testid="hourly-report-dl"
                     className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#FF5900] text-white hover:opacity-90">Download report</button>
                 </div>
@@ -1666,7 +1734,7 @@ function App() {
                 <div className="text-xs text-gray-500 mb-3">gray = estimated on shift · orange/red = recommended (red = short hour)</div>
                 <div className="flex items-center gap-2 mb-1 text-xs text-gray-500"><span className="inline-block w-4 h-1.5 rounded-sm" style={{ background: '#D9C6BC' }} /> on shift <span className="inline-block w-4 h-1.5 rounded-sm ml-3" style={{ background: '#FF5900' }} /> needed</div>
                 {(() => {
-                  const maxR = Math.max(...hourlyPlan.rows.map(p => Math.max(p.riders, p.rec)));
+  const maxR = Math.max(1, ...hourlyPlan.rows.map(p => Math.max(p.riders, p.rec)));
                   return hourlyPlan.rows.map(p => {
                     const short = p.gap > 0.5;
                     return (
