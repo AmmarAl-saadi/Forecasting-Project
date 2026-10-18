@@ -461,12 +461,12 @@ function buildHourlyReportHtml(hourlyPlan, tUtr, tDt) {
     ? `DT-binding hours ${hourRanges(hourlyPlan.dtBinding.map(p => p.h))}: DT above ${tDt}-min target at current headcount`
     : 'No DT-binding hours';
   const pad2 = n => String(n).padStart(2, '0');
-  const shiftTables = hourlyPlan.cards.map(city => {
+  const shiftTables = hourlyPlan.shiftCities.map(city => {
     const rows = (hourlyPlan.shifts[city] || []).map(s => {
       const short = s.status === 'SHORT';
       return `<tr><td class="sh">${pad2(s.fromH)}:00&#8211;${pad2(s.toH)}:00</td><td>${s.len}h</td><td>${fmt(s.orders)}</td><td>${fmt(s.now)}</td><td>${fmt(s.need)}</td><td class="${short ? 'neg' : s.gap < -0.5 ? 'pos' : ''}">${s.gap > 0 ? '+' : ''}${Math.round(s.gap)}</td><td class="${short ? 'neg' : ''}">${s.status}</td></tr>`;
     }).join('');
-    const label = hourlyPlan.cards.length > 1 ? `<div class="cn" style="margin:8px 0 2px">${esc(city)}</div>` : '';
+    const label = hourlyPlan.shiftCities.length > 1 ? `<div class="cn" style="margin:8px 0 2px">${esc(city)}</div>` : '';
     return `${label}<table class="st"><thead><tr><th>Shift</th><th>Hrs</th><th>Orders</th><th>On shift</th><th>Needed</th><th>Gap</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
   }).join('');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Hourly Rider Coverage</title><style>
@@ -491,7 +491,7 @@ h1{font-size:20px;margin:0 0 2px}.sub{color:#96776B;font-size:13px;margin-bottom
 <div class="cards">${cards}</div>
 <div class="card"><div class="t">Riders on shift vs needed ${DASH} ${hourlyPlan.citySel === 'All' ? 'all cities' : esc(hourlyPlan.citySel)}</div>
 <div class="ts">gray = estimated on shift ${MID} orange/red = recommended (red = short hour)</div>${bars}</div>
-<div class="card"><div class="t">Recommended shifts (4&#8211;6h) ${DASH} ${hourlyPlan.citySel === 'All' ? 'all cities' : esc(hourlyPlan.citySel)}</div>
+<div class="card"><div class="t">Recommended shifts (4&#8211;6h) ${DASH} ${hourlyPlan.citySel === 'All' ? 'small cities' : esc(hourlyPlan.citySel)}</div>
 <div class="ts">one headcount per shift = the peak need inside its hours ${MID} day split into 4&#8211;6h shifts, cuts nudged to low-demand hours</div>${shiftTables}</div>
 <div class="card"><div class="t">Hours that need riders</div>
 <div class="tag">${esc(dtNote)}</div></div>
@@ -1285,10 +1285,11 @@ function App() {
     };
     const shifts = {};
     for (const city of cityNames) shifts[city] = buildShifts(city);
+    const shiftCities = hourlyCity !== 'All' ? [hourlyCity] : cityNames.filter(c => c !== 'Irbid');
     const rangeLabel = hasDates && range.length
       ? range[0] + ' → ' + range[range.length - 1]
       : ((hourlyFrom || hourlyTo) ? (hourlyFrom || '...') + ' → ' + (hourlyTo || '...') : '');
-    return { perCity, cityNames, pooled, rows, cards, days, dtBinding, citySel: hourlyCity, hasDates, dates: hasDates ? hourly.dates : [], rangeLen: range.length, rangeLabel, shifts };
+    return { perCity, cityNames, pooled, rows, cards, days, dtBinding, citySel: hourlyCity, hasDates, dates: hasDates ? hourly.dates : [], rangeLen: range.length, rangeLabel, shifts, shiftCities };
   }, [hourly, hourlyDays, targetUtr, targetDt, hourlyCity, hourlyFrom, hourlyTo]);
 
   const downloadHourlyReport = () => {
@@ -1826,10 +1827,10 @@ function App() {
                 </div>
               )}
               <div className="card p-5" data-testid="shifts-card">
-                <div className="text-sm font-semibold text-[#411517] mb-1">Recommended shifts (4&#8211;6h) — {hourlyPlan.citySel === 'All' ? 'all cities' : hourlyPlan.citySel}</div>
-                <div className="text-xs text-gray-500 mb-3">one headcount per shift = the peak need inside its hours &#183; day split into 4&#8211;6h shifts, cuts nudged to low-demand hours</div>
+                <div className="text-sm font-semibold text-[#411517] mb-1">Recommended shifts (4&#8211;6h) — {hourlyPlan.citySel === 'All' ? 'small cities' : hourlyPlan.citySel}</div>
+                <div className="text-xs text-gray-500 mb-3">one headcount per shift = the peak need inside its hours &#183; day split into 4&#8211;6h shifts, cuts nudged to low-demand hours {hourlyPlan.citySel === 'All' && '&#183; small cities only'}</div>
                 <div className={hourlyPlan.citySel === 'All' ? 'grid md:grid-cols-2 gap-x-6 gap-y-4' : ''}>
-                  {hourlyPlan.cards.map(city => (
+                  {hourlyPlan.shiftCities.map(city => (
                     <div key={city}>
                       {hourlyPlan.citySel === 'All' && <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">{city}</div>}
                       <table className="w-full text-sm">
