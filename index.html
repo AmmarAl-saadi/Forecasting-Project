@@ -1041,16 +1041,14 @@ function App() {
 
   const metrics = useMemo(() => {
     if (!filteredRecords.length) return null;
-    const withOrders = filteredRecords.filter(r => r.orders != null);
     const withUtr     = filteredRecords.filter(r => r.utr != null);
     const withDt       = filteredRecords.filter(r => r.dt != null);
     const withFail     = filteredRecords.filter(r => r.failRate != null);
-    const totalOrders = withOrders.length ? Math.round(withOrders.reduce((s, r) => s + r.orders, 0)) : null;
     const avgUtr       = withUtr.length ? parseFloat((withUtr.reduce((s, r) => s + r.utr, 0) / withUtr.length).toFixed(2)) : null;
     const avgDt         = withDt.length ? parseFloat((withDt.reduce((s, r) => s + r.dt, 0) / withDt.length).toFixed(1)) : null;
     const avgFail       = withFail.length ? parseFloat(((withFail.reduce((s, r) => s + r.failRate, 0) / withFail.length) * 100).toFixed(2)) : null;
     const status = calcSupplyStatus(avgUtr, targetUtr, avgDt, targetDt);
-    return { totalOrders, avgUtr, avgDt, avgFail, status };
+    return { avgUtr, avgDt, avgFail, status };
   }, [filteredRecords, targetUtr, targetDt]);
 
   const cityChartData = useMemo(() => {
@@ -1420,8 +1418,7 @@ function App() {
       {activeTab === 'overview' && (
         <>
           {metrics && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-              <MetricCard title="Total Orders" value={metrics.totalOrders?.toLocaleString()} icon="📦" />
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
               <MetricCard title="Avg UTR" value={metrics.avgUtr} icon="⚡"
                 color={metrics.avgUtr >= targetUtr ? 'metric-positive' : 'metric-negative'}
                 sub={`Target: ${targetUtr}`} />
