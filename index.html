@@ -1311,7 +1311,6 @@ function App() {
   const tabs = [
     { id: 'overview', label: 'Overview' },
     { id: 'cities',   label: 'By City'  },
-    { id: 'trends',   label: 'Trends'   },
     ...(hasFailRate ? [{ id: 'fail', label: 'Fail Rate & Extras' }] : []),
     { id: 'supply',   label: 'Rider Plan' },
     { id: 'hourly',   label: 'Hourly'  },
@@ -1322,6 +1321,7 @@ function App() {
 
   useEffect(() => {
     if (activeTab === 'fail' && !hasFailRate) setActiveTab('overview');
+    if (activeTab === 'trends') setActiveTab('overview'); // Trends merged into Overview
   }, [activeTab, hasFailRate]);
 
   return (
@@ -1506,9 +1506,10 @@ function App() {
         </div>
       )}
 
-      {/* ── TRENDS ── */}
-      {activeTab === 'trends' && (
+      {/* ── TRENDS (merged into Overview) ── */}
+      {activeTab === 'overview' && (
         <div className="space-y-4">
+          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider pt-1">Trends</div>
           {yoyChartData.rows.length > 0 ? (
             <>
               {yoyCompleted && (
