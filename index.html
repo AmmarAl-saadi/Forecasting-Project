@@ -770,7 +770,7 @@ function App() {
   const [fcOvr, setFcOvr] = useState({});        // { [city]: '10' } typed growth-% row override (missing/'' = auto)
   const [hourly, setHourly] = useState(null);     // hourly workbook (one sheet per city, rows = hours) or null
   const [hourlyFileName, setHourlyFileName] = useState(''); // name of the loaded hourly file
-  const [hourlyDays, setHourlyDays] = useState(7); // days covered by the sheet (weekly refresh = 7 days)
+  const [hourlyDays, setHourlyDays] = useState(30); // days in the hourly month (rider-hour math)
   const [hourlyCity, setHourlyCity] = useState('All'); // city filter for the Hourly tab (cards, bars, callout, table)
   const [hourlyFrom, setHourlyFrom] = useState('');   // date-range filter (From) — only when the hourly file has dates
   const [hourlyTo, setHourlyTo] = useState('');       // date-range filter (To)
@@ -1182,7 +1182,7 @@ function App() {
     const range = hasDates
       ? hourly.dates.filter(d => (!hourlyFrom || d >= hourlyFrom) && (!hourlyTo || d <= hourlyTo))
       : [''];
-    const days = hasDates ? Math.max(range.length, 1) : (hourlyDays > 0 ? hourlyDays : 7);
+    const days = hasDates ? Math.max(range.length, 1) : (hourlyDays > 0 ? hourlyDays : 30);
     const perCity = {};
     for (const city of cityNames) {
       const dayMap = hourly.cities[city] || {};
@@ -1756,7 +1756,7 @@ function App() {
                     <span className="text-xs font-semibold text-[#FF5900] whitespace-nowrap">{hourlyPlan.rangeLabel}{hourlyPlan.hasDates ? ` · ${hourlyPlan.days} day${hourlyPlan.days === 1 ? '' : 's'}` : ' · label only'}</span>
                   )}
                   {!hourlyPlan.hasDates && (<>
-                    <label className="text-xs text-gray-400 whitespace-nowrap">Days covered</label>
+                    <label className="text-xs text-gray-400 whitespace-nowrap">Days in month</label>
                     <input type="number" min="1" max="31" className="rounded-lg px-2 py-1.5 text-sm w-16 text-center" value={hourlyDays} onChange={e => setHourlyDays(Number(e.target.value))} />
                   </>)}
                   <button onClick={downloadHourlyReport} data-testid="hourly-report-dl"
